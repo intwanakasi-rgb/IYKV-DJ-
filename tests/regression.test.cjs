@@ -71,7 +71,7 @@ test('MIDI soft takeover waits for crossing and re-arms after mouse changes', ()
 
 test('first Auto Mix starts with a finite generation and pauses outgoing deck', async () => {
   const h = harness();
-  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
     startDeckPlayback = async d => { d.isPlaying = true; return true; };
     globalThis.frames = []; requestAnimationFrame = fn => { frames.push(fn); return frames.length; };
     globalThis.pausedDeck = null; pauseDeck = id => { pausedDeck = id; };`);
@@ -85,7 +85,7 @@ test('first Auto Mix starts with a finite generation and pauses outgoing deck', 
 
 test('cancelled pending Auto Mix cannot start a fade afterwards', async () => {
   const h = harness();
-  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
     globalThis.pending = [];
     startDeckPlayback = () => new Promise(resolve => pending.push(resolve));`);
   const start = h.run('startAutoMix()');
@@ -119,7 +119,7 @@ test('sync rate stays consistent with pitch slider and saved settings', () => {
   const h = harness();
   const slider = h.element('input[data-role="tempo"][data-deck="1"]');
   slider.value = '0';
-  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
     deckState[0].bpm = 160; deckState[1].baseBpm = 100;
     updateDeckAudioFromControls = () => {
       const pitch = Number(document.querySelector('input[data-role="tempo"][data-deck="1"]').value);
@@ -233,4 +233,47 @@ test('recording finalisation blocks restart and frees chunks and stream', () => 
   assert.equal(stopped, true);
   assert.equal(h.run('state.recordingStopping'), false);
   assert.equal(h.run('state.recordingChunks.length'), 0);
+});
+
+test('Auto Mix silences incoming A/B deck before starting playback and ignores C/D', async () => {
+  const h = harness();
+  h.element('crossfader').value = '50';
+  h.run(`deckState.slice(0,2).forEach(d => {
+    d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; d.gainNode = {gain:{value:1}};
+  });
+  globalThis.started = [];
+  startDeckPlayback = async d => {
+    if (d.id === 1 && d.gainNode.gain.value !== 0) throw Error('Incoming deck audible before fade');
+    started.push(d.id); d.isPlaying = true; return true;
+  };`);
+  await h.run('startAutoMix()');
+  assert.equal(h.run('state.autoMix'), true);
+  assert.equal(h.run('started.join(",")'), '0,1');
+  assert.equal(h.element('crossfader').value, '0');
+});
+
+test('extra decks have independent channel levels unaffected by crossfader', () => {
+  const h = harness();
+  assert.equal(h.run('deckState.length'), 4);
+  assert.equal(h.run('state.settings.decks.length'), 4);
+  h.run('deckState.forEach(d => d.gainNode = {gain:{value:0}})');
+  h.element('input[data-role="volume"][data-deck="2"]').value = '75';
+  h.element('crossfader').value = '0';
+  h.run('applyCrossfader()');
+  assert.ok(Math.abs(h.run('deckState[2].gainNode.gain.value') - 0.6) < 1e-9);
+  h.element('crossfader').value = '100';
+  h.run('applyCrossfader()');
+  assert.ok(Math.abs(h.run('deckState[2].gainNode.gain.value') - 0.6) < 1e-9);
+});
+
+test('switching to two decks pauses C/D and removes their load targets', () => {
+  const h = harness();
+  h.element('midiTarget').options = [];
+  h.run(`globalThis.paused = []; pauseDeck = id => paused.push(id); renderPlaylist = () => {};
+    setDeckCount(4);`);
+  assert.equal(h.run('state.deckCount'), 4);
+  assert.equal(h.element('deckC').hidden, false);
+  h.run('setDeckCount(2)');
+  assert.equal(h.run('paused.join(",")'), '2,3');
+  assert.equal(h.element('deckC').hidden, true);
 });

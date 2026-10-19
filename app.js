@@ -4,10 +4,10 @@ function readMidiMappings() {
     if (!saved || Array.isArray(saved) || typeof saved !== 'object') return {};
     return Object.fromEntries(Object.entries(saved).filter(([, mapping]) => {
       if (!mapping || typeof mapping !== 'object') return false;
-      if (mapping.action) return /^(play|cue)-[01]$/.test(mapping.action);
+      if (mapping.action) return /^(play|cue)-[0-3]$/.test(mapping.action);
       return mapping.role === 'crossfader' ||
         (['volume', 'low', 'mid', 'high', 'tempo', 'effect-amount'].includes(mapping.role) &&
-          ['0', '1'].includes(String(mapping.deck)));
+          ['0', '1', '2', '3'].includes(String(mapping.deck)));
     }));
   } catch {
     return {};
@@ -79,6 +79,10 @@ const deckState = [
   },
 ];
 
+// Extra decks use independent channel levels; the crossfader controls A/B.
+for (const id of [2, 3]) deckState.push({ ...deckState[0], id });
+const deckLetter = (id) => 'ABCD'[id];
+
 const state = {
   audioContext: null,
   masterGain: null,
@@ -87,6 +91,7 @@ const state = {
   autoMixStarting: false,
   autoMixRunId: 0,
   midiPickup: new Map(),
+  deckCount: 2,
   library: [],
   selectedDeck: null,
   database: null,
@@ -111,6 +116,27 @@ const state = {
     ],
   },
 };
+
+for (const id of [2, 3]) state.settings.decks.push({ ...state.settings.decks[0] });
+
+function setDeckCount(count) {
+  state.deckCount = Number(count) === 4 ? 4 : 2;
+  if (state.deckCount === 2) {
+    for (const id of [2, 3]) pauseDeck(id);
+    if (Number(midiTarget.value.slice(-1)) >= 2) midiTarget.value = 'play-0';
+    if (state.selectedDeck >= 2) state.selectedDeck = null;
+  }
+  for (const id of [2, 3]) {
+    document.getElementById(`deck${deckLetter(id)}`).hidden = state.deckCount === 2;
+  }
+  for (const option of midiTarget.options) {
+    const hidden = Number(option.value.slice(-1)) >= state.deckCount;
+    option.disabled = hidden;
+    option.hidden = hidden;
+  }
+  try { localStorage.setItem('iykDeckCount', String(state.deckCount)); } catch {}
+  renderPlaylist();
+}
 
 const statusPill = document.getElementById('statusPill');
 const playlistEl = document.getElementById('playlist');
@@ -285,11 +311,11 @@ function createAudioElementForDeck(deck) {
 }
 
 function updateDeckView(deck) {
-  const trackTitle = document.getElementById(`trackName${deck.id === 0 ? 'A' : 'B'}`);
-  const timeEl = document.getElementById(`time${deck.id === 0 ? 'A' : 'B'}`);
-  const durationEl = document.getElementById(`duration${deck.id === 0 ? 'A' : 'B'}`);
-  const bpmEl = document.getElementById(`bpm${deck.id === 0 ? 'A' : 'B'}`);
-  const suffix = deck.id === 0 ? 'A' : 'B';
+  const trackTitle = document.getElementById(`trackName${deckLetter(deck.id)}`);
+  const timeEl = document.getElementById(`time${deckLetter(deck.id)}`);
+  const durationEl = document.getElementById(`duration${deckLetter(deck.id)}`);
+  const bpmEl = document.getElementById(`bpm${deckLetter(deck.id)}`);
+  const suffix = deckLetter(deck.id);
 
   if (trackTitle) {
     trackTitle.textContent = deck.fileName;
@@ -311,7 +337,7 @@ function updateDeckView(deck) {
 }
 
 function drawVisualizer(deck) {
-  const canvas = document.getElementById(`visual${deck.id === 0 ? 'A' : 'B'}`);
+  const canvas = document.getElementById(`visual${deckLetter(deck.id)}`);
   if (!canvas) return;
 
   const ctx = canvas.getContext('2d');
@@ -379,7 +405,7 @@ function runAutoMix() {
     } else {
       state.autoMix = false;
       pauseDeck(outgoingDeck.id);
-      toggleAutoMixBtn.textContent = 'AUTO MIX';
+      toggleAutoMixBtn.textContent = 'AUTO MIX A/B';
       setStatus('Auto mix complete');
     }
   };
@@ -402,8 +428,9 @@ async function startDeckPlayback(deck) {
 }
 
 async function startAutoMix() {
-  const loadedDecks = deckState.filter((deck) => deck.objectUrl);
-  if (loadedDecks.length !== deckState.length) {
+  const mixDecks = deckState.slice(0, 2);
+  const loadedDecks = mixDecks.filter((deck) => deck.objectUrl);
+  if (loadedDecks.length !== 2) {
     setStatus('Load a track on both decks before auto mix');
     return;
   }
@@ -411,12 +438,17 @@ async function startAutoMix() {
   toggleAutoMixBtn.disabled = true;
   state.autoMixStarting = true;
   const runId = ++state.autoMixRunId;
-  let outgoingDeck = deckState.find((deck) => deck.isPlaying);
+  let outgoingDeck = mixDecks.find((deck) => deck.isPlaying);
   if (!outgoingDeck) outgoingDeck = getDeckById(state.crossfader > 50 ? 1 : 0);
   const incomingDeck = getDeckById(1 - outgoingDeck.id);
 
+  // Select the audible source before starting either track. Otherwise a
+  // centred crossfader plays both tracks at full mix level during startup.
+  crossfaderInput.value = outgoingDeck.id === 0 ? '0' : '100';
+  applyCrossfader();
+  if (!incomingDeck.isPlaying) incomingDeck.audio.currentTime = incomingDeck.cuePoint || 0;
   try {
-    const startPromises = deckState
+    const startPromises = mixDecks
       .filter((deck) => !deck.isPlaying)
       .map((deck) => startDeckPlayback(deck));
     const startedDecks = await Promise.all(startPromises);
@@ -426,7 +458,7 @@ async function startAutoMix() {
     state.autoMixIncoming = incomingDeck.id;
     state.autoMix = true;
     toggleAutoMixBtn.textContent = 'CANCEL MIX';
-    setStatus(`Mixing into deck ${incomingDeck.id === 0 ? 'A' : 'B'}`);
+    setStatus(`Mixing into deck ${deckLetter(incomingDeck.id)}`);
     runAutoMix();
   } finally {
     if (runId === state.autoMixRunId) state.autoMixStarting = false;
@@ -440,7 +472,7 @@ function cancelAutoMix() {
   state.autoMixStarting = false;
   cancelAnimationFrame(state.autoMixFrame);
   toggleAutoMixBtn.disabled = false;
-  toggleAutoMixBtn.textContent = 'AUTO MIX';
+  toggleAutoMixBtn.textContent = 'AUTO MIX A/B';
   setStatus('Auto mix cancelled');
 }
 
@@ -619,7 +651,7 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   deck.libraryId = options.id || crypto.randomUUID();
   deck.loopStart = Number.isFinite(options.loopStart) ? options.loopStart : null;
   deck.loopEnd = Number.isFinite(options.loopEnd) ? options.loopEnd : null;
-  document.getElementById(`loopState${deckId === 0 ? 'A' : 'B'}`).textContent = deck.loopEnd === null ? 'OFF' : '4 BEATS';
+  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = deck.loopEnd === null ? 'OFF' : '4 BEATS';
 
   if (deck.audio) URL.revokeObjectURL(deck.objectUrl || '');
   deck.objectUrl = URL.createObjectURL(file);
@@ -659,7 +691,7 @@ async function loadTrackForDeck(deckId, file, options = {}) {
 
   renderPlaylist();
   updateDeckView(deck);
-  setStatus(`Loaded ${deck.fileName} on deck ${deckId === 0 ? 'A' : 'B'}`);
+  setStatus(`Loaded ${deck.fileName} on deck ${deckLetter(deckId)}`);
 }
 
 function renderPlaylist() {
@@ -682,11 +714,11 @@ function renderPlaylist() {
     meta.textContent = `${item.bpm || 120} BPM`;
     const deckActions = document.createElement('div');
     deckActions.className = 'deck-load-actions';
-    [0, 1].forEach((deckId) => {
+    Array.from({ length: state.deckCount }, (_, id) => id).forEach((deckId) => {
       const loadButton = document.createElement('button');
       loadButton.type = 'button';
-      loadButton.textContent = deckId === 0 ? 'A' : 'B';
-      loadButton.title = `Load ${item.name} on deck ${deckId === 0 ? 'A' : 'B'}`;
+      loadButton.textContent = deckLetter(deckId);
+      loadButton.title = `Load ${item.name} on deck ${deckLetter(deckId)}`;
       loadButton.addEventListener('click', () => loadTrackForDeck(deckId, item.file, { ...item, fromLibrary: true }));
       deckActions.appendChild(loadButton);
     });
@@ -708,8 +740,9 @@ function renderPlaylist() {
 
 function togglePlay(deckId) {
   const deck = getDeckById(deckId);
+  if (deckId >= state.deckCount) return;
   if (!deck.objectUrl) {
-    setStatus(`Load a track on deck ${deckId === 0 ? 'A' : 'B'} before playing`);
+    setStatus(`Load a track on deck ${deckLetter(deckId)} before playing`);
     return;
   }
 
@@ -782,7 +815,7 @@ function applyDeckEffects(deckId) {
     filterGain.gain.value = 0;
     delayGain.gain.value = 0;
   }
-  document.getElementById(`effectValue${deckId === 0 ? 'A' : 'B'}`).textContent = `${Math.round(amount * 100)}%`;
+  document.getElementById(`effectValue${deckLetter(deckId)}`).textContent = `${Math.round(amount * 100)}%`;
 }
 
 function saveSettings() {
@@ -853,16 +886,16 @@ function toggleLoop(deckId) {
     deck.loopStart = null;
     deck.loopEnd = null;
     saveLoop(deck);
-    document.getElementById(`loopState${deckId === 0 ? 'A' : 'B'}`).textContent = 'OFF';
-    setStatus(`Loop disabled on deck ${deckId === 0 ? 'A' : 'B'}`);
+    document.getElementById(`loopState${deckLetter(deckId)}`).textContent = 'OFF';
+    setStatus(`Loop disabled on deck ${deckLetter(deckId)}`);
     return;
   }
   const beatDuration = 60 / Math.max(1, deck.baseBpm);
   deck.loopStart = deck.audio.currentTime;
   deck.loopEnd = Math.min(deck.duration, deck.loopStart + beatDuration * 4);
   saveLoop(deck);
-  document.getElementById(`loopState${deckId === 0 ? 'A' : 'B'}`).textContent = '4 BEATS';
-  setStatus(`4 beat loop set on deck ${deckId === 0 ? 'A' : 'B'}`);
+  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = '4 BEATS';
+  setStatus(`4 beat loop set on deck ${deckLetter(deckId)}`);
 }
 
 async function saveLoop(deck) {
@@ -916,13 +949,10 @@ function applyCrossfader() {
   const value = Number(crossfaderInput.value);
   state.crossfader = value;
 
-  const deckA = getDeckById(0);
-  const deckB = getDeckById(1);
-
-  [deckA, deckB].forEach((deck) => {
+  deckState.forEach((deck) => {
     const volume = Number(document.querySelector(`input[data-role="volume"][data-deck="${deck.id}"]`)?.value ?? 80) / 100;
     const position = value / 100;
-    const balance = state.settings.crossfaderCurve === 'linear'
+    const balance = deck.id >= 2 ? 1 : state.settings.crossfaderCurve === 'linear'
       ? deck.id === 0 ? 1 - position : position
       : deck.id === 0 ? Math.cos(position * Math.PI / 2) : Math.sin(position * Math.PI / 2);
     if (deck.gainNode) deck.gainNode.gain.value = volume * balance * 0.8;
@@ -947,7 +977,7 @@ function updateDeckAudioFromControls(deckId) {
   const tempo = deck.baseBpm * (1 + pitch / 100);
 
   const position = state.crossfader / 100;
-  const balance = state.settings.crossfaderCurve === 'linear'
+  const balance = deckId >= 2 ? 1 : state.settings.crossfaderCurve === 'linear'
     ? deckId === 0 ? 1 - position : position
     : deckId === 0 ? Math.cos(position * Math.PI / 2) : Math.sin(position * Math.PI / 2);
   deck.gainNode.gain.value = volume * balance * 0.8;
@@ -955,7 +985,7 @@ function updateDeckAudioFromControls(deckId) {
   deck.mid.gain.value = mid;
   deck.high.gain.value = high;
   deck.bpm = tempo;
-  document.getElementById(`tempoValue${deckId === 0 ? 'A' : 'B'}`).textContent = `${pitch > 0 ? '+' : ''}${pitch.toFixed(1)}%`;
+  document.getElementById(`tempoValue${deckLetter(deckId)}`).textContent = `${pitch > 0 ? '+' : ''}${pitch.toFixed(1)}%`;
   Object.assign(state.settings.decks[deckId], { volume: Number(volumeSlider?.value ?? 80), low, mid, high, tempo: pitch });
 
   if (deck.audio) {
@@ -1106,6 +1136,10 @@ async function init() {
   });
 
   bindDeckInputs();
+  const deckCountControl = document.getElementById('deckCount');
+  try { deckCountControl.value = localStorage.getItem('iykDeckCount') === '4' ? '4' : '2'; } catch {}
+  setDeckCount(deckCountControl.value);
+  deckCountControl.addEventListener('change', () => setDeckCount(deckCountControl.value));
   try {
     state.database = await openLibraryDatabase();
     state.library = await readLibrary();

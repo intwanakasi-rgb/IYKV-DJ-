@@ -1,6 +1,6 @@
 # IYK DeckLab
 
-**IYK DeckLab by Intwana Yase Kasi** is a free, local-first two-deck DJ practice project. It currently runs in a modern browser and can be packaged as an Electron desktop application. It has no account, subscription, advertisement, sample pack, or cloud dependency.
+**IYK DeckLab by Intwana Yase Kasi** is a free, local-first two/four-deck DJ practice project. It currently runs in a modern browser and can be packaged as an Electron desktop application. It has no account, subscription, advertisement, sample pack, or cloud dependency.
 
 ## Current status
 
@@ -70,3 +70,9 @@ Nothing in phases 2–4 is represented as implemented. Android and iOS need nati
 ## Reliability checks
 
 Run `npm test`, `npm run check`, and `npm run web:build` before submitting changes. Tests cover Auto Mix, audio graph wiring, track identity and import safety, tempo consistency, MIDI mapping and pickup, and Electron readiness using controlled mocks. Hardware and audible output still require physical testing. See [the reliability review](docs/REVIEW.md) for fixes, limitations, and release gates. Re-learn existing controller mappings after upgrading: new mappings distinguish MIDI channels.
+
+## Two or four decks
+
+Choose **2 decks** or **4 decks** above the mixer. C/D have independent transport, pitch, EQ, effects, cue, loop, channel level, library load buttons, and MIDI Learn targets. Switching back to two decks pauses and hides C/D; their loaded tracks remain available. The layout preference is saved locally.
+
+Crossfader, Sync, and Auto Mix operate on **A/B only**. C/D are extra channels controlled by their level sliders and are included in master recording. Auto Mix first puts the crossfader fully on the outgoing A/B deck so the incoming track cannot leak before the timed fade. It then overlaps tracks during the configured transition and pauses the outgoing deck on completion. It is a user-triggered transition, not an unattended playlist queue or beat-aligned mix.

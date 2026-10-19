@@ -189,3 +189,8 @@ input[type='range']::-webkit-slider-thumb { width: 12px; height: 12px; appearanc
 
 
 .controller-help { color: #b8b9c6; font-size: .75rem; line-height: 1.5; margin: .5rem 0 1rem; }
+
+.deck[hidden] { display: none; }
+.deck-mode { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.deck-c { border-top-color: #55d7ac; }
+.deck-d { border-top-color: #f0b75d; }
