@@ -341,3 +341,20 @@ body[data-mixer-style=vertical] .mixer-control input { height:36px; }
  .deck-mode { margin-bottom:4px; }
  .channel-strips > .master-meter .master-stereo { height:160px; min-height:160px; }
 }
+
+.loop-active { color:#75f5ac !important; background:#153d2b; border:1px solid #42d98a; padding:3px 6px; font-weight:bold; }
+[data-action=loop][aria-pressed=true] { background:#17613d; border-color:#68edaa; color:#fff; }
+body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:none; }
+.channel-strips > .master-meter { justify-content:center; padding-bottom:38px; }
+/* Keep library controls and tracks reachable at every window height. */
+.workspace { height:auto; min-height:calc(100dvh - 48px); }
+.library-panel { flex:none; height:auto; min-height:300px; overflow:visible; padding:10px; }
+.library-heading,.library-tools { display:flex; }
+.library-heading { align-items:center; justify-content:space-between; }
+.library-heading .eyebrow { margin:0; }
+.library-heading h2 { margin:4px 0; }
+.browser-content { height:260px; min-height:180px; overflow:hidden; }
+.playlist { height:100%; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+.crate-nav,.queue-panel { min-height:0; overflow-y:auto; }
+.library-footer { position:static; margin-top:8px; }
+.library-panel > .controller-help { margin:6px 0; }

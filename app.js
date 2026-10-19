@@ -2,7 +2,7 @@ const appearanceDefaults = Object.freeze({
   mixerStyle:'vertical', waveformLayout:'stacked', waveformHeight:60, waveformSeconds:12,
   interfaceDensity:'comfortable', interfaceTheme:'dark', interfaceSize:100,
   defaultPerformanceTab:'hotcues', meterMode:'peak', meterHold:1000,
-  showJog:true, showOverview:true, reduceMotion:false,
+  showJog:true, showOverview:true, showBottomMeters:true, reduceMotion:false,
 });
 
 function readMidiMappings() {
@@ -374,6 +374,11 @@ function updateDeckView(deck) {
     bpmEl.textContent = deck.bpmKnown ? `${deck.bpmEstimated ? '≈ ' : ''}${deck.bpm.toFixed(1)} BPM` : (state.library.find(item => item.id === deck.libraryId)?.preparing ? 'Analysing…' : '— BPM');
   }
 
+  const looping = deck.loopEnd !== null && deck.loopEnd > deck.loopStart;
+  const loopButton = document.querySelector(`[data-action="loop"][data-deck="${deck.id}"]`);
+  if (loopButton) { loopButton.setAttribute('aria-pressed', String(looping)); loopButton.textContent = looping ? 'LOOP ON' : 'LOOP'; }
+  const loopLabel = document.getElementById(`loopState${suffix}`);
+  if (loopLabel) { loopLabel.classList.toggle('loop-active', looping); if (looping) loopLabel.textContent = `LOOP · ${Math.round((deck.loopEnd-deck.loopStart)*deck.baseBpm/60)} BEATS`; }
   drawVisualizer(deck);
 }
 
@@ -397,6 +402,10 @@ function drawVisualizer(deck) {
     const span = detail ? state.settings.appearance.waveformSeconds * (deck.audio?.playbackRate || 1) : duration;
     const start = detail ? deck.currentTime - span * 0.3 : 0;
     const toX = time => (time - start) / span * width;
+    if (deck.loopEnd !== null && deck.loopEnd > deck.loopStart) {
+      ctx.fillStyle = '#35cf8733';
+      ctx.fillRect(toX(deck.loopStart),0,toX(deck.loopEnd)-toX(deck.loopStart),height);
+    }
     const peaks = deck.waveform;
     if (peaks?.length) {
       ctx.fillStyle = ['#a27aee', '#5aabed', '#55d7ac', '#f0b75d'][deck.id];
@@ -433,7 +442,7 @@ function setStatus(message) {
 }
 
 function updateMasterMeter() {
-  updateStereoMeter(state.masterStereo, 'Master');
+  updateCentralDeckMeters();
 }
 
 function runAutoMix() {
@@ -1760,7 +1769,7 @@ function restoreAppearance(saved) {
   for (const [key,values] of Object.entries({waveformSeconds:[6,12,24],interfaceSize:[100,115,130],meterHold:[0,1000,3000]})) {
     if (values.includes(saved[key])) target[key] = saved[key];
   }
-  for (const key of ['showJog','showOverview','reduceMotion']) if (typeof saved[key] === 'boolean') target[key] = saved[key];
+  for (const key of ['showJog','showOverview','showBottomMeters','reduceMotion']) if (typeof saved[key] === 'boolean') target[key] = saved[key];
 }
 function syncAppearanceSettings() {
   for (const [key,value] of Object.entries(state.settings.appearance)) {
@@ -1775,6 +1784,7 @@ function applyAppearance() {
   const body = document.body;
   body.dataset.mixerStyle = value.mixerStyle;
   body.dataset.waveformLayout = value.waveformLayout;
+  body.dataset.showBottomMeters = String(value.showBottomMeters);
   body.dataset.density = value.interfaceDensity;
   body.dataset.theme = value.interfaceTheme;
   body.dataset.showJog = String(value.showJog);
@@ -1871,6 +1881,22 @@ function calculateMeter(samples, mode) {
   let peak = 0, squares = 0;
   for (const value of samples) {peak=Math.max(peak,Math.abs(value));squares+=value*value;}
   return {peak, level:mode === 'rms' ? Math.sqrt(squares/Math.max(1,samples.length)) : peak};
+}
+function updateCentralDeckMeters() {
+  // L means left deck A and R means right deck B here, not master stereo.
+  state.deckPairMeter ||= {channels:[0,1].map(id => ({
+    samples:new Float32Array(256), held:0, holdUntil:0,
+    analyser:{getFloatTimeDomainData(out) {
+      out.fill(0);
+      const tap = deckState[id].stereoMeter;
+      if (!tap) return;
+      for (const channel of tap.channels) {
+        channel.analyser.getFloatTimeDomainData(channel.samples);
+        for (let n=0;n<out.length;n++) out[n]=Math.max(out[n],Math.abs(channel.samples[n] || 0));
+      }
+    }}
+  }))};
+  updateStereoMeter(state.deckPairMeter, 'Master');
 }
 function updateStereoMeter(tap, prefix) {
   if (!tap) return;

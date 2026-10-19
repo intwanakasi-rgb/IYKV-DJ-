@@ -33,8 +33,10 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
   assert.equal(await page.locator('.channel-strips > .master-meter .stereo-rail').count(),2);
   const dimensions=await page.evaluate(()=>({height:document.documentElement.scrollHeight,viewport:innerHeight,meter:document.querySelector('.master-meter').getBoundingClientRect().toJSON(),channel:document.getElementById('channelA').getBoundingClientRect().toJSON()}));
   assert.ok(dimensions.meter.y<dimensions.channel.bottom && dimensions.meter.bottom>dimensions.channel.y);
-  assert.ok(dimensions.height<=dimensions.viewport+2,JSON.stringify(dimensions));
+  await page.locator('#playlist').scrollIntoViewIfNeeded();
+  assert.ok(await page.locator('#playlist').isVisible());
+  assert.ok(await page.locator('.library-tools').isVisible());
   if(process.env.DECKLAB_SCREENSHOT_DIR){fs.mkdirSync(process.env.DECKLAB_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.DECKLAB_SCREENSHOT_DIR,'production.png')});}
-  console.log('Built web: automatic BPM/worker succeeds; central L/R aligned; 1366×768 fits without page scrolling.');
+  console.log('Built web: automatic BPM/worker succeeds; central L/R aligned; playlist and library tools remain reachable.');
  }finally{await browser?.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

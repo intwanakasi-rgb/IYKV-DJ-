@@ -112,6 +112,16 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
       return data.some(value => Math.abs(value) > .005);
     });
     await page.waitForFunction(() => Number(document.getElementById('meterAL').getAttribute('aria-valuenow')) > Number(document.getElementById('meterAR').getAttribute('aria-valuenow')) * 3);
+    await page.waitForFunction(() => Number(document.getElementById('meterMasterL').getAttribute('aria-valuenow')) > .005 && Number(document.getElementById('meterMasterR').getAttribute('aria-valuenow')) === 0);
+    await page.locator('[data-action="loop"][data-deck="0"]').click();
+    await page.waitForFunction(() => document.getElementById('loopStateA').classList.contains('loop-active'));
+    assert.equal(await page.locator('[data-action="loop"][data-deck="0"]').getAttribute('aria-pressed'),'true');
+    await page.locator('[data-action="loop"][data-deck="0"]').click();
+    await page.locator('#settingsBtn').click();
+    await page.locator('#showBottomMeters').uncheck();
+    await page.getByRole('button',{name:'Close settings',exact:true}).click();
+    assert.equal(await page.locator('.channel-content > .stereo-meters:visible').count(),0);
+    assert.equal(await page.locator('.channel-strips > .master-meter:visible').count(),1);
     await page.locator('[data-action="pause"][data-deck="0"]').click();
     // Press-and-release actually previews and returns, without replacing cue.
     const cue = page.locator('[data-action="cue"][data-deck="0"]');
