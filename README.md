@@ -35,7 +35,7 @@ Other saved preferences include waveform placement (stacked or within decks), he
 ## First session
 
 1. Import audio files. Importing never replaces a playing track.
-2. With playback paused, use **ANALYSE** to prepare waveforms and estimate BPM. Analysis is local, serialised, and uses a worker. For browser memory limits, files must be at most 100 MB and decoded tracks at most 30 minutes.
+2. Loading a track automatically prepares its waveform and estimates BPM. Use **ANALYSE** to retry preparation if needed. Analysis is local, serialised, and uses a worker. For browser memory limits, files must be at most 100 MB and decoded tracks at most 30 minutes.
 3. Load a track with A/B/C/D or drag it onto a deck. Verify estimated BPM (`≈`), correct the BPM field if necessary, and use **SET BEAT** on a known beat. Analysis cannot reliably infer musical downbeats or variable-tempo grids.
 4. Use **SET CUE** to store a cue explicitly. CUE during playback returns to that cue; when paused, hold CUE to preview and release to return. Press Play while holding CUE to keep playing.
 5. An empty hot-cue pad saves its position. A filled pad jumps and starts playback. Shift+click clears it. Click a deck to select it for keyboard control: Space toggles playback; number keys 1–8 trigger pads when not editing another control.

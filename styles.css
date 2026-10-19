@@ -280,3 +280,10 @@ body[data-mixer-style=vertical] .mixer-control input { height:36px; }
 .settings-tabs { display:flex; gap:8px; margin:16px 0; border-bottom:1px solid #554164; padding-bottom:10px; }.settings-tabs button { padding:9px 12px; background:#28202f; border:1px solid #554164; color:#d7c5e6; cursor:pointer; }.settings-tabs button[aria-selected=true] { background:#66418b; color:white; }.about-details { display:grid; grid-template-columns:110px 1fr; gap:10px; margin:20px 0; }.about-details dt { color:#ab98bd; }.about-details dd { margin:0; font-weight:600; }.about-downloads { display:flex; gap:10px; flex-wrap:wrap; }.about-note { font-size:12px; line-height:1.6; color:#af9dbf; }#aboutSettingsPanel { padding:8px 0 20px; }#aboutSettingsPanel>p { line-height:1.6; }#aboutSettingsPanel a { color:var(--violet); }body[data-theme=daylight] :is(.about-note,.about-details dt) { color:#5c4868; }
 
 .iyk-app-card { display:flex; flex-direction:column; gap:9px; padding:16px; border:1px solid #77529b; background:#292035; border-radius:6px; text-decoration:none; }.iyk-app-card strong { font-size:18px; }.iyk-app-card span { font-size:12px; line-height:1.5; color:#d0bfdc; }body[data-theme=daylight] .iyk-app-card { background:#e5d6f2; }body[data-theme=daylight] .iyk-app-card span { color:#4b315d; }
+
+/* Prominent central master output: independent left and right channels. */
+.central-mixer > .master-meter { display:flex; flex-direction:column; align-items:center; gap:6px; margin:10px auto 14px; }
+.central-mixer > .master-meter .master-stereo { width:70px; height:150px; min-height:150px; gap:10px; }
+.central-mixer > .master-meter .stereo-column { width:30px; }
+.central-mixer > .master-meter .stereo-rail { width:24px; }
+.central-mixer > .master-meter small { font-size:12px; font-weight:bold; }

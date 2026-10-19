@@ -371,7 +371,7 @@ function updateDeckView(deck) {
   }
 
   if (bpmEl) {
-    bpmEl.textContent = deck.bpmKnown ? `${deck.bpmEstimated ? '≈ ' : ''}${deck.bpm.toFixed(1)} BPM` : '— BPM';
+    bpmEl.textContent = deck.bpmKnown ? `${deck.bpmEstimated ? '≈ ' : ''}${deck.bpm.toFixed(1)} BPM` : (state.library.find(item => item.id === deck.libraryId)?.preparing ? 'Analysing…' : '— BPM');
   }
 
   drawVisualizer(deck);
@@ -409,7 +409,7 @@ function drawVisualizer(deck) {
       }
     } else {
       ctx.fillStyle = '#9d91ad'; ctx.font = `${11 * ratio}px sans-serif`;
-      ctx.fillText(deck.libraryId ? 'ANALYSE to prepare waveform / BPM' : 'Load a track', 12 * ratio, height * .55);
+      ctx.fillText(deck.libraryId ? (state.library.find(item => item.id === deck.libraryId)?.preparing ? 'Preparing waveform / BPM…' : 'Waveform unavailable · try ANALYSE') : 'Load a track', 12 * ratio, height * .55);
     }
     if (detail && deck.bpmKnown) {
       const beat = 60 / deck.baseBpm, anchor = deck.gridOffset || 0;
@@ -801,6 +801,9 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   const bpmInput = document.querySelector(`[data-role="bpm"][data-deck="${deckId}"]`);
   if (bpmInput) bpmInput.value = deck.bpmKnown ? String(deck.baseBpm) : '';
   setStatus(`Loaded ${deck.fileName} on deck ${deckLetter(deckId)}`);
+  // Prepare on load without delaying transport or repeating cached analysis.
+  const loadedItem = state.library.find(track => track.id === deck.libraryId);
+  if (loadedItem && !loadedItem.waveform?.length) void prepareTrack(loadedItem);
 }
 
 function renderPlaylist() {
@@ -1418,7 +1421,7 @@ function prepareTrack(item) {
   renderPlaylist();
   const task = async () => {
     try {
-      if (deckState.some(deck => deck.isPlaying)) throw Error('Pause playback before analysis; prepare tracks before your set');
+      // PCM processing runs in a worker; playback can continue during preparation.
       if (item.file.size > 100 * 1024 * 1024) throw Error('File too large for browser preparation (100 MB limit); set BPM manually');
       ensureContext();
       setStatus(`Analysing ${item.name}`);
@@ -1440,10 +1443,12 @@ function prepareTrack(item) {
       await persistTrack(item);
       for (const deck of deckState.filter(deck => deck.libraryId === item.id)) {
         deck.waveform = item.waveform;
-        if (!deck.isPlaying) {
+        {
           deck.baseBpm = item.bpm || 120; deck.bpmKnown = Boolean(item.bpmKnown);
           deck.bpmEstimated = Boolean(item.bpmEstimated); deck.gridOffset = item.gridOffset || 0;
-          updateDeckAudioFromControls(deck.id);
+          // Metadata updates must not change an already playing track's rate.
+          deck.bpm = deck.baseBpm * (deck.audio?.playbackRate || 1);
+          updateDeckView(deck);
           document.querySelector(`[data-role="bpm"][data-deck="${deck.id}"]`).value = item.bpmKnown ? String(item.bpm) : '';
         }
       }

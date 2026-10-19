@@ -94,9 +94,11 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     await page.waitForFunction(() => window.decklabTest.state.library.length === 3);
     await page.locator('.track-row').filter({hasText:'Test 1'}).getByRole('button',{name:'A',exact:true}).click();
     await page.waitForFunction(() => window.decklabTest.deckState[0].duration > 0);
-    await page.locator('[data-action="prepare"][data-deck="0"]').click();
+    // Loading alone must populate waveform and BPM; no ANALYSE click.
     await page.waitForFunction(() => Boolean(window.decklabTest.deckState[0].waveform?.length), null, {timeout:30000});
     assert.ok(await page.evaluate(() => window.decklabTest.deckState[0].bpmKnown));
+    await page.waitForFunction(() => /[0-9]/.test(document.getElementById('bpmA').textContent));
+    assert.equal(await page.locator('.central-mixer > .master-meter .stereo-rail').count(), 2);
     await page.locator('[data-role="bpm"][data-deck="0"]').fill('120');
     await page.locator('[data-role="bpm"][data-deck="0"]').dispatchEvent('change');
     await page.evaluate(() => { window.decklabTest.deckState[0].audio.currentTime = 1; });
