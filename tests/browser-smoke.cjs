@@ -46,7 +46,9 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     await page.locator('#settingsBtn').click();
     await page.locator('#aboutSettingsTab').click();
     assert.equal(await page.locator('#aboutVersion').innerText(),require('../package.json').version);
-    assert.equal(await page.locator('#aboutSettingsPanel a').count(),4);
+    assert.equal(await page.locator('#aboutSettingsPanel a').count(),5);
+    assert.equal(await page.locator('#aboutDownloadCount').innerText(),require('../download-stats.json').total.toLocaleString());
+    assert.equal(await page.getByRole('link',{name:/IYK Hub A digital/}).getAttribute('href'),'https://iykhub.online/');
     await page.getByRole('button',{name:'Close settings',exact:true}).click();
     assert.equal(await page.locator('.deck:visible').count(), 2);
     assert.equal(await page.locator('body').getAttribute('data-mixer-style'),'vertical');

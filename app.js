@@ -1896,6 +1896,9 @@ function setSettingsTab(tab, focus = false) {
   if (focus) (about ? aboutButton : mixerButton).focus();
 }
 function bindAboutSettings() {
+  const stats=window.DECKLAB_BUILD?.downloads;
+  document.getElementById('aboutDownloadCount').textContent=Number.isSafeInteger(stats?.total)&&stats.total>=0 ? stats.total.toLocaleString() : 'Unavailable';
+  document.getElementById('aboutDownloadsUpdated').textContent=stats?.updatedAt && Number.isFinite(Date.parse(stats.updatedAt)) ? new Date(stats.updatedAt).toLocaleDateString() : 'Not yet verified';
   document.getElementById('aboutVersion').textContent = window.DECKLAB_BUILD?.version || 'Development build';
   document.getElementById('aboutRuntime').textContent = navigator.userAgent.includes('Electron/') ? 'Desktop' : 'Web browser';
   for (const [id,tab] of [['mixerSettingsTab','mixer'],['aboutSettingsTab','about']]) {

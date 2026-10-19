@@ -16,7 +16,9 @@ The native desktop audio engine described in `docs/ARCHITECTURE.md` is still fut
 
 ## Version and downloads
 
-Current version: **0.2.0**. Open **Settings → About & Downloads** to see the running version, web/desktop runtime and Windows/web build download links. Version metadata is generated from `package.json` before web and desktop builds, so both interfaces display the same release number. Settings opens on Mixer & Layout; About is a separate keyboard-accessible tab.
+Current version: **0.2.0**. Open **Settings → About & Downloads** to see the running version, web/desktop runtime and Windows/web build download links. Version metadata is generated from `package.json` before web and desktop builds, so both interfaces display the same release number. Settings opens on Mixer & Layout; About is a separate keyboard-accessible tab. About includes Other IYK Apps with a link to https://iykhub.online/.
+
+The download counter sums GitHub release installer asset counts, excluding drafts, checksums, package archives and development workflow ZIP downloads. Counts are fetched during web/Windows builds using the workflow token, embedded as a dated snapshot, and never require shipping a token to users. Failed refreshes retain the last verified snapshot. No published releases currently means zero release downloads, even if development ZIPs have been downloaded.
 
 The main-branch Pages workflow builds the same interface as desktop, uploads `IYK-DeckLab-Web` for download and deploys to GitHub Pages. First-time hosting must be enabled in repository **Settings → Pages → Source: GitHub Actions**; the connector used for development cannot change this administrative setting. If deployment is not enabled, the static web artifact is still available to download or host elsewhere.
 

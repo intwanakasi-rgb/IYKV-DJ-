@@ -29,6 +29,10 @@ jobs:
       - name: Require signing credentials
         run: node scripts/windows-signing.cjs --check
       - run: npm ci
+      - name: Refresh published download count
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/update-download-stats.cjs
       - run: npm run package:win:signed
       - name: Verify trusted signatures and create installer checksum
         shell: pwsh

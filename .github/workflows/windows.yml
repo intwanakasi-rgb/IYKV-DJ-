@@ -19,6 +19,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Refresh published download count
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/update-download-stats.cjs
       - run: npm run package:win
       - name: Label development build and create checksum
         shell: pwsh
