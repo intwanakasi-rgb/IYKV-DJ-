@@ -44,3 +44,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  publish-download:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: IYK-DeckLab-Windows
+          path: installer
+      - name: Publish direct Windows download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Free IYK DeckLab Windows x64 development build.
+
+          Download IYK-DeckLab-Windows-Installer.exe below. SHA256SUMS.txt is included for integrity checking.
+
+          This installer is unsigned. Windows may show an Unknown publisher or SmartScreen warning. It is not a verified signed release.
+          NOTES
+          gh release create "windows-build-${BUILD_NUMBER}" installer/* --target "$BUILD_SHA" --title "IYK DeckLab Windows build ${BUILD_NUMBER} (unsigned)" --notes-file release-notes.md --latest

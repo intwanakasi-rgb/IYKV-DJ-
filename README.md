@@ -105,3 +105,5 @@ Native low-latency audio/device routing, ASIO, multichannel headphone outputs, s
 Project code is MIT licensed. Build/runtime dependency notices must accompany distributions; no copyrighted music, sample packs or ML models are bundled. Playwright is used only for development tests.
 
 Effects per deck: low-pass, high-pass, band-pass, echo, beat-timed dub delay, reverb and drive, with an amount control and Off.
+
+Windows downloads now use the latest release installer directly. Successful main-branch Windows builds publish an explicitly labelled unsigned development release with SHA256 checksums. Signed releases still require the signing credentials and verification workflow.
