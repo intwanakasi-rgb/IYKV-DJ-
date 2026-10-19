@@ -78,7 +78,7 @@ Packaging explicitly uses `--publish never`; installers are uploaded as workflow
 
 [Windows builds](https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/windows.yml) · [Releases](https://github.com/intwanakasi-rgb/IYKV-DJ-/releases)
 
-Publishing a `v*` tag or manually running **Publish Windows release** with a version builds and uploads the installer to a GitHub release using the workflow token. The direct latest-installer link works only after a release exists. Repository privacy still controls access. Installers are unsigned. Windows builds, Linux packaging, macOS and mobile support must not be represented as hardware-verified until tested. Android/iOS apps and macOS packaging are not implemented.
+Publishing a `v*` tag or manually running **Publish Windows release** now requires trusted signing credentials, signs the app/installer, verifies their Authenticode signatures and timestamps, and uploads the installer plus checksum using the workflow token. The direct latest-installer link works only after a release exists. Repository privacy still controls access. Development artifacts are unsigned and may show SmartScreen’s Unknown publisher warning. Signed release support is prepared, but no signing certificate has been configured; see [Windows signing setup](docs/WINDOWS_SIGNING.md). Windows builds, Linux packaging, macOS and mobile support must not be represented as hardware-verified until tested. Android/iOS apps and macOS packaging are not implemented.
 
 ## Remaining professional release work
 

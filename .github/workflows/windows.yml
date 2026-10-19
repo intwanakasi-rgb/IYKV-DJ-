@@ -20,11 +20,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run package:win
+      - name: Label development build and create checksum
+        shell: pwsh
+        run: |
+          $installer = 'dist/desktop/IYK-DeckLab-Windows-Installer.exe'
+          $hash = Get-FileHash -LiteralPath $installer -Algorithm SHA256
+          "$($hash.Hash.ToLowerInvariant())  IYK-DeckLab-Windows-Installer.exe" | Set-Content -Encoding ascii 'dist/desktop/SHA256SUMS.txt'
+          @'
+          ## Unsigned development installer
+          This is a development artifact, not a signed public release. Windows may show an Unknown publisher / SmartScreen warning. A checksum is included for integrity checking; it does not establish publisher identity.
+          '@ | Add-Content $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         with:
           name: IYK-DeckLab-Windows
           path: |
             dist/desktop/*.exe
             dist/desktop/*.nsis.7z
+            dist/desktop/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
