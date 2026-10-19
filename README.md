@@ -103,3 +103,5 @@ Publishing a `v*` tag or manually running **Publish Windows release** now requir
 Native low-latency audio/device routing, ASIO, multichannel headphone outputs, sample-accurate loops, scratch-quality jog/HID/DVS handling, hardware presets/LED output, stems, sampler, video/karaoke/broadcasting, robust recording-to-disk/crash recovery, metadata/key detection and variable-tempo grids remain future work. Browser analysis estimates are a preparation aid, not a guarantee of correct beat/downbeat detection.
 
 Project code is MIT licensed. Build/runtime dependency notices must accompany distributions; no copyrighted music, sample packs or ML models are bundled. Playwright is used only for development tests.
+
+Effects per deck: low-pass, high-pass, band-pass, echo, beat-timed dub delay, reverb and drive, with an amount control and Off.

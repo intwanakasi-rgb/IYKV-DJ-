@@ -140,9 +140,9 @@ test('echo wet path connects to deck output', () => {
     nodes.push(node); return node;
   };
   h.context.fakeContext = { createGain: makeNode, createBiquadFilter: makeNode,
-    createAnalyser: makeNode, createDelay: makeNode, createMediaElementSource: makeNode };
+    sampleRate:8000, createConvolver:makeNode, createWaveShaper:makeNode, createBuffer:(c,n)=>({getChannelData:()=>new Float32Array(n)}), createAnalyser: makeNode, createDelay: makeNode, createMediaElementSource: makeNode };
   h.run('ensureContext = () => {}; state.audioContext = fakeContext; deckState[0].audio = {}; buildDeckGraph(deckState[0])');
-  assert.equal(h.run('deckState[0].effectNodes.delayGain.connections.includes(deckState[0].analyser)'), true);
+  for(const node of ['delayGain','reverbGain','distortionGain']) assert.equal(h.run(`deckState[0].effectNodes.${node}.connections.includes(deckState[0].analyser)`),true);
 });
 
 test('desktop installs permission handlers only after Electron ready', async () => {

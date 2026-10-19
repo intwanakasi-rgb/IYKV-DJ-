@@ -358,3 +358,21 @@ body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:
 .crate-nav,.queue-panel { min-height:0; overflow-y:auto; }
 .library-footer { position:static; margin-top:8px; }
 .library-panel > .controller-help { margin:6px 0; }
+
+/* Give the decks the space previously reserved by the oversized mixer. */
+@media(min-width:1000px) {
+ .decks { grid-template-columns:minmax(0,1fr) minmax(230px,.48fr) minmax(0,1fr); align-items:stretch; }
+ .deck { display:flex; flex-direction:column; padding:12px; }
+ .deck .performance-row { flex:1; min-height:90px; }
+ .deck .jog { width:78px; height:78px; border-width:6px; }
+ .deck .transport-button { min-width:40px; padding:6px; }
+ .deck .play-button { width:44px; height:44px; }
+ .deck .pads button { padding:10px 5px; }
+ .deck .track-copy h1,.deck .track-copy h2 { font-size:18px; }
+ .deck .prepare-row { margin:8px 0; }
+ .effect-pads { grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:10px 0; }
+ .effect-pads button { padding:12px 4px; font-size:10px; }
+ .four-decks .deck .performance-row { min-height:55px; }
+ .four-decks .deck .jog { width:50px; height:50px; }
+ .four-decks .deck .pads button { padding:5px; }
+}

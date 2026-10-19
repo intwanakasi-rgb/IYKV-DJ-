@@ -260,6 +260,14 @@ function buildDeckGraph(deck) {
   const delay = state.audioContext.createDelay(1);
   const delayFeedback = state.audioContext.createGain();
   const delayGain = state.audioContext.createGain();
+  const reverb = state.audioContext.createConvolver();
+  const reverbGain = state.audioContext.createGain();
+  const distortion = state.audioContext.createWaveShaper();
+  const distortionGain = state.audioContext.createGain();
+  const impulse = state.audioContext.createBuffer(2, state.audioContext.sampleRate * 1.8, state.audioContext.sampleRate);
+  for (let c=0;c<2;c++) { const pcm=impulse.getChannelData(c); for(let n=0;n<pcm.length;n++) pcm[n]=(Math.random()*2-1)*Math.pow(1-n/pcm.length,3); }
+  reverb.buffer=impulse; reverbGain.gain.value=0; distortionGain.gain.value=0;
+  distortion.oversample='2x';
 
   low.type = 'lowshelf';
   low.frequency.value = 250;
@@ -306,6 +314,8 @@ function buildDeckGraph(deck) {
   delayGain.connect(analyser);
   delay.connect(delayFeedback);
   delayFeedback.connect(delay);
+  gainNode.connect(reverb); reverb.connect(reverbGain); reverbGain.connect(analyser);
+  gainNode.connect(distortion); distortion.connect(distortionGain); distortionGain.connect(analyser);
   analyser.connect(state.masterGain);
   deck.stereoMeter = createStereoTap(state.audioContext, analyser);
 
@@ -314,7 +324,7 @@ function buildDeckGraph(deck) {
   deck.mid = mid;
   deck.high = high;
   deck.analyser = analyser;
-  deck.effectNodes = { dryGain, filter, filterGain, delay, delayFeedback, delayGain };
+  deck.effectNodes = { dryGain, filter, filterGain, delay, delayFeedback, delayGain, reverbGain, distortion, distortionGain };
   deck.frequencyBuffer = new Uint8Array(analyser.frequencyBinCount);
 }
 
@@ -958,22 +968,25 @@ function applyDeckEffects(deckId) {
 
   const effect = document.querySelector(`[data-role="effect"][data-deck="${deckId}"]`).value;
   const amount = Number(document.querySelector(`[data-role="effect-amount"][data-deck="${deckId}"]`).value) / 100;
-  const { dryGain, filter, filterGain, delay, delayGain } = deck.effectNodes;
-
-  if (effect === 'filter') {
-    dryGain.gain.value = 1 - amount;
-    filterGain.gain.value = amount;
-    filter.frequency.value = 18000 * (350 / 18000) ** amount;
-    delayGain.gain.value = 0;
-  } else if (effect === 'echo') {
-    dryGain.gain.value = 1;
-    filterGain.gain.value = 0;
-    delayGain.gain.value = amount * 0.7;
-    delay.delayTime.value = 0.28;
-  } else {
-    dryGain.gain.value = 1;
-    filterGain.gain.value = 0;
-    delayGain.gain.value = 0;
+  const { dryGain, filter, filterGain, delay, delayFeedback, delayGain, reverbGain, distortion, distortionGain } = deck.effectNodes;
+  dryGain.gain.value=1; filterGain.gain.value=0; delayGain.gain.value=0;
+  reverbGain.gain.value=0; distortionGain.gain.value=0; delayFeedback.gain.value=.35;
+  filter.Q.value=.7;
+  if (['filter','highpass','bandpass'].includes(effect)) {
+    dryGain.gain.value=1-amount; filterGain.gain.value=amount;
+    filter.type=effect==='filter'?'lowpass':effect;
+    filter.frequency.value=effect==='filter'?18000*(350/18000)**amount:effect==='highpass'?80*(5000/80)**amount:200*(5000/200)**amount;
+    if(effect==='bandpass') filter.Q.value=2;
+  } else if (effect==='echo' || effect==='dub') {
+    delayGain.gain.value=amount*.7;
+    delay.delayTime.value=effect==='dub'?Math.min(.95,60/(deck.baseBpm||120)*.75):.28;
+    delayFeedback.gain.value=effect==='dub'?.55:.35;
+  } else if(effect==='reverb') {
+    dryGain.gain.value=1-amount*.35; reverbGain.gain.value=amount*.8;
+  } else if(effect==='drive') {
+    const curve=new Float32Array(2048), strength=1+amount*35;
+    for(let n=0;n<curve.length;n++){const x=n*2/(curve.length-1)-1;curve[n]=Math.tanh(x*strength)/Math.tanh(strength);}
+    distortion.curve=curve; dryGain.gain.value=1-amount; distortionGain.gain.value=amount*.5;
   }
   document.getElementById(`effectValue${deckLetter(deckId)}`).textContent = `${Math.round(amount * 100)}%`;
 }
@@ -1012,7 +1025,7 @@ function restoreSettings() {
         Object.entries(ranges).forEach(([key, [min, max]]) => {
           if (Number.isFinite(deck[key])) state.settings.decks[index][key] = Math.max(min, Math.min(max, deck[key]));
         });
-        if (['off', 'filter', 'echo'].includes(deck.effect)) state.settings.decks[index].effect = deck.effect;
+        if (['off','filter','echo','highpass','bandpass','dub','reverb','drive'].includes(deck.effect)) state.settings.decks[index].effect = deck.effect;
       });
     }
   } catch (error) {

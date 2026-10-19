@@ -99,6 +99,16 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     assert.ok(await page.evaluate(() => window.decklabTest.deckState[0].bpmKnown));
     await page.waitForFunction(() => /[0-9]/.test(document.getElementById('bpmA').textContent));
     assert.equal(await page.locator('.channel-strips > .master-meter .stereo-rail').count(), 2);
+    await page.locator('#fxTabA').click();
+    for (const effect of ['highpass','bandpass','dub','reverb','drive','off']) {
+      await page.locator(`[data-fx="${effect}"][data-deck="0"]`).click();
+      assert.equal(await page.locator('#effectA').inputValue(),effect);
+      assert.ok(await page.evaluate(() => {
+        const n=window.decklabTest.deckState[0].effectNodes;
+        return [n.dryGain,n.filterGain,n.delayGain,n.reverbGain,n.distortionGain].every(node=>Number.isFinite(node.gain.value));
+      }));
+    }
+    await page.locator('#hotTabA').click();
     await page.locator('[data-role="bpm"][data-deck="0"]').fill('120');
     await page.locator('[data-role="bpm"][data-deck="0"]').dispatchEvent('change');
     await page.evaluate(() => { window.decklabTest.deckState[0].audio.currentTime = 1; });
