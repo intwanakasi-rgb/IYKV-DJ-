@@ -30,7 +30,7 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
     let body = fs.readFileSync(path.join(root, file), 'utf8');
     // Instrument only this test server; production app exposes no test globals.
-    if (file === 'app.js') body += '\nwindow.decklabTest = {state,deckState,prepareTrack,cuePress,cueRelease,queueTick};';
+    if (file === 'app.js') body += '\nwindow.decklabTest = {state,deckState,prepareTrack,cuePress,cueRelease,queueTick,onMidiMessage};';
     response.end(body);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -108,6 +108,12 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
         return [n.dryGain,n.filterGain,n.delayGain,n.reverbGain,n.distortionGain].every(node=>Number.isFinite(node.gain.value));
       }));
     }
+    await page.evaluate(() => window.decklabTest.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0x96,9,127]}));
+    assert.equal(await page.locator('#effectA').inputValue(),'echo');
+    await page.evaluate(() => window.decklabTest.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0xb6,23,127]}));
+    assert.equal(Number(await page.locator('#effectAmountA').inputValue()),100);
+    await page.evaluate(() => window.decklabTest.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0x96,9,127]}));
+    assert.equal(await page.locator('#effectA').inputValue(),'off');
     await page.locator('#hotTabA').click();
     await page.locator('[data-role="bpm"][data-deck="0"]').fill('120');
     await page.locator('[data-role="bpm"][data-deck="0"]').dispatchEvent('change');

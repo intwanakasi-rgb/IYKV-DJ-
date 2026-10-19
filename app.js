@@ -668,6 +668,19 @@ function flx2Mapping(status, number, bank = 0) {
 function handleFlx2Extra(event, bank) {
   const [status,number,value]=event.data, channel=status&15, type=status&240;
   const deck=channel+bank;
+  // SHIFT + SMART FADER is the FLX2's SMART CFX message.
+  if(channel===6 && type===144 && number===9 && value>0) {
+    for(const id of [bank,bank+1]) {
+      const select=document.querySelector(`[data-role="effect"][data-deck="${id}"]`);
+      const target=getDeckById(id);
+      if(select.value==='off') select.value=target.lastControllerEffect || 'echo';
+      else { target.lastControllerEffect=select.value; select.value='off'; }
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+      setPerformanceTab(id,'effects');
+    }
+    setStatus('FLX2 effects toggled for the selected deck pair. CFX knobs control effect amount; centre is dry.');
+    return true;
+  }
   if(channel<2 && type===176 && [33,34,35,41].includes(number)) {
     const target=getDeckById(deck), delta=value-64;
     if(target.audio && target.objectUrl && delta) target.audio.currentTime=Math.max(0,Math.min(target.duration||0,target.audio.currentTime+delta*.025));
@@ -742,8 +755,13 @@ function onMidiMessage(event) {
   const bank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
   const learned=document.getElementById('controllerProfile')?.value==='flx2' ? null : state.midiMappings[key];
   if(flx && !learned && handleFlx2Extra(event,bank)) return;
-  const target = learned || (flx ? flx2Mapping(status,number,bank) : null);
+  let target = learned || (flx ? flx2Mapping(status,number,bank) : null);
   if (!target) return;
+  const cfx=flx && !learned && type===176 && (status&15)===6 && [23,24].includes(number);
+  if(cfx) {
+    const effect=document.querySelector(`[data-role="effect"][data-deck="${target.deck}"]`)?.value;
+    if(effect && effect!=='off') target={role:'effect-amount',deck:target.deck,centred:true};
+  }
   if (type === 0xb0 && value === 0 && target.action?.startsWith('cue-')) { cueRelease(Number(target.action.split('-')[1])); return; }
   if (target.role && type === 0xb0) {
     const control = target.role === 'crossfader'
@@ -752,12 +770,12 @@ function onMidiMessage(event) {
     if (!control || control.type !== 'range') return;
     const min = Number(control.min), max = Number(control.max);
     const current = (Number(control.value) - min) / (max - min);
-    const position = value / 127;
+    const position = target.centred ? Math.min(1, Math.abs(value-63.5)/63.5) : value / 127;
     const pickup = state.midiPickup.get(key);
     // Re-arm if the mouse or another control changed the software value.
     const acquired = pickup?.acquired && Math.abs(current - pickup.applied) < 0.015;
     const crossed = pickup && (pickup.previous - current) * (position - current) <= 0;
-    if (!acquired && Math.abs(position - current) > 2 / 127 && !crossed) {
+    if (!target.centred && !acquired && Math.abs(position - current) > 2 / 127 && !crossed) {
       state.midiPickup.set(key, { previous: position, acquired: false });
       return;
     }

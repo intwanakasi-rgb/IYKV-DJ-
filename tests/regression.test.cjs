@@ -440,3 +440,13 @@ test('explicit FLX2 profile works with generic port names and overrides stale le
  assert.equal(h.run('plays.join()'),'0');
  assert.match(h.element('controllerStatus').textContent,/Receiving: USB MIDI/);
 });
+
+test('FLX2 CFX controls the selected effect amount with centre dry', () => {
+ const h=harness();h.element('controllerProfile').value='flx2';
+ h.element('[data-role="effect"][data-deck="0"]').value='reverb';
+ const slider=h.element('[data-role="effect-amount"][data-deck="0"]');slider.min='0';slider.max='100';slider.value='50';
+ h.run('onMidiMessage({currentTarget:{id:"flx",name:"DDJ-FLX2"},data:[0xb6,23,64]})');
+ assert.ok(Number(slider.value)<1);
+ h.run('onMidiMessage({currentTarget:{id:"flx",name:"DDJ-FLX2"},data:[0xb6,23,127]})');
+ assert.equal(Number(slider.value),100);
+});
