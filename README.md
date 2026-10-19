@@ -14,6 +14,16 @@
 
 The native desktop audio engine described in `docs/ARCHITECTURE.md` is still future work. This release uses Web Audio and HTML media, including in Electron. It is not equivalent to VirtualDJ's professional engine.
 
+## Mixer appearance and performance tabs
+
+The default layout uses **vertical mixer sliders** and **stacked waveforms above the decks**. In Settings, choose vertical sliders, rotary knobs or horizontal sliders. Knobs support vertical dragging, keyboard arrows and double-click to reset to zero; channel volume remains a vertical fader in every mode. Changing control style does not reset the mix.
+
+Each channel has **two coloured L/R level bars** beside its controls, measured independently after channel level and effects. The master output also has separate L/R bars. Meters use a −60 to 0 dBFS display scale, green/yellow/red regions, clipping indicators and optional peak hold; choose Peak or RMS mode in Settings. These are digital signal meters, not calibrated hardware meters.
+
+Each deck has **Hot Cues** and **Effects** tabs. Effects has its own selector/amount and quick Off, Low-pass and Echo buttons. Tabs work with mouse and keyboard arrows. Choose the default deck tab in Settings.
+
+Other saved preferences include waveform placement (stacked or within decks), height and zoom, comfortable/compact spacing, dark/high-contrast/daylight themes, text size, jog-wheel and overview visibility, reduced display motion, meter mode and peak-hold duration. Reset appearance restores these defaults without changing channel levels or audio settings. Device and music data are not reset.
+
 ## First session
 
 1. Import audio files. Importing never replaces a playing track.

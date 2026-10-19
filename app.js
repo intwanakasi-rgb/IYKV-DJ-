@@ -1,3 +1,10 @@
+const appearanceDefaults = Object.freeze({
+  mixerStyle:'vertical', waveformLayout:'stacked', waveformHeight:60, waveformSeconds:12,
+  interfaceDensity:'comfortable', interfaceTheme:'dark', interfaceSize:100,
+  defaultPerformanceTab:'hotcues', meterMode:'peak', meterHold:1000,
+  showJog:true, showOverview:true, reduceMotion:false,
+});
+
 function readMidiMappings() {
   try {
     const saved = JSON.parse(localStorage.getItem('iykMidiMappings') || '{}');
@@ -111,6 +118,7 @@ const state = {
   midiMappings: readMidiMappings(),
   midiLearning: false,
   settings: {
+    appearance: {...appearanceDefaults},
     masterVolume: 90,
     autoMixDuration: 12,
     crossfaderCurve: 'equal-power',
@@ -136,6 +144,7 @@ function setDeckCount(count) {
   for (const id of [2, 3]) {
     document.getElementById(`deck${deckLetter(id)}`).hidden = state.deckCount === 2;
     document.getElementById(`channel${deckLetter(id)}`).hidden = state.deckCount === 2;
+    document.getElementById(`waveLane${deckLetter(id)}`).hidden = state.deckCount === 2;
   }
   for (const option of midiTarget.options) {
     const hidden = Number(option.value.slice(-1)) >= state.deckCount;
@@ -222,6 +231,7 @@ function ensureContext() {
       state.limiter.connect(state.masterAnalyser);
     } else state.masterGain.connect(state.masterAnalyser);
     state.masterAnalyser.connect(state.audioContext.destination);
+    state.masterStereo = createStereoTap(state.audioContext, state.masterAnalyser);
   }
   if (state.audioContext.state === 'suspended') {
     state.audioContext.resume();
@@ -297,6 +307,7 @@ function buildDeckGraph(deck) {
   delay.connect(delayFeedback);
   delayFeedback.connect(delay);
   analyser.connect(state.masterGain);
+  deck.stereoMeter = createStereoTap(state.audioContext, analyser);
 
   deck.gainNode = gainNode;
   deck.low = low;
@@ -383,7 +394,7 @@ function drawVisualizer(deck) {
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     ctx.fillStyle = '#0e1018'; ctx.fillRect(0, 0, width, height);
     const duration = deck.duration || 1;
-    const span = detail ? 12 * (deck.audio?.playbackRate || 1) : duration;
+    const span = detail ? state.settings.appearance.waveformSeconds * (deck.audio?.playbackRate || 1) : duration;
     const start = detail ? deck.currentTime - span * 0.3 : 0;
     const toX = time => (time - start) / span * width;
     const peaks = deck.waveform;
@@ -422,17 +433,7 @@ function setStatus(message) {
 }
 
 function updateMasterMeter() {
-  if (!state.masterAnalyser || state.audioContext?.state !== 'running') {
-    document.querySelectorAll('.meter-track i').forEach(segment => { segment.classList.remove('active', 'clipping'); }); return;
-  }
-  const samples = state.masterFrequencyBuffer;
-  state.masterAnalyser.getByteTimeDomainData(samples);
-  const rms = Math.sqrt(samples.reduce((total, value) => total + ((value - 128) / 128) ** 2, 0) / samples.length);
-  const activeCount = Math.min(8, Math.round(rms * 18));
-  document.querySelectorAll('.meter-track i').forEach((segment, index) => {
-    segment.classList.toggle('active', index < activeCount);
-    segment.classList.toggle('clipping', rms > 0.95 && index >= 6);
-  });
+  updateStereoMeter(state.masterStereo, 'Master');
 }
 
 function runAutoMix() {
@@ -979,6 +980,7 @@ function restoreSettings() {
 
   try {
     const saved = JSON.parse(stored);
+    restoreAppearance(saved?.appearance);
     if (Number.isFinite(saved.masterVolume)) state.settings.masterVolume = Math.max(0, Math.min(100, saved.masterVolume));
     if (Number.isFinite(saved.autoMixDuration)) state.settings.autoMixDuration = Math.max(4, Math.min(30, saved.autoMixDuration));
     if (saved.crossfaderCurve === 'linear' || saved.crossfaderCurve === 'equal-power') {
@@ -1008,6 +1010,9 @@ function restoreSettings() {
 
 function syncSettingsControls() {
   const settings = state.settings;
+  syncAppearanceSettings();
+  applyAppearance();
+  for (const deck of deckState) setPerformanceTab(deck.id,settings.appearance.defaultPerformanceTab);
   document.getElementById('masterVolume').value = String(settings.masterVolume);
   document.getElementById('masterVolumeValue').textContent = `${settings.masterVolume}%`;
   document.getElementById('autoMixDuration').value = String(settings.autoMixDuration);
@@ -1158,6 +1163,7 @@ function updateDeckAudioFromControls(deckId) {
     deck.audio.playbackRate = tempo / deck.baseBpm || 1;
   }
 
+  syncMixerControlVisuals(deckId);
   updateDeckView(deck);
 }
 
@@ -1327,7 +1333,10 @@ async function init() {
   crossfaderInput.addEventListener('change', () => localStorage.setItem('iykCrossfader', crossfaderInput.value));
   deckState.forEach((deck) => updateDeckAudioFromControls(deck.id));
 
-  const animationLoop = () => {
+  let lastDisplayFrame = 0;
+  const animationLoop = (now) => {
+    if (state.settings.appearance.reduceMotion && now - lastDisplayFrame < 100) { requestAnimationFrame(animationLoop); return; }
+    lastDisplayFrame = now;
     deckState.forEach((deck) => {
       if (deck.analyser) {
         updateDeckView(deck);
@@ -1475,12 +1484,7 @@ async function triggerHotCue(deckId, index, clear = false) {
 }
 
 function updateChannelMeter(deck) {
-  if (!deck.preAnalyser?.getFloatTimeDomainData) return;
-  deck.preAnalyser.getFloatTimeDomainData(deck.peakSamples);
-  let peak = 0;
-  for (const sample of deck.peakSamples) peak = Math.max(peak, Math.abs(sample));
-  const meter = document.getElementById(`channelMeter${deckLetter(deck.id)}`);
-  meter.value = Math.min(1, peak); meter.title = peak >= .99 ? 'Input clipping: reduce gain' : `${(20 * Math.log10(Math.max(.00001, peak))).toFixed(1)} dBFS`;
+  updateStereoMeter(deck.stereoMeter, deckLetter(deck.id));
   const jog = document.querySelector(`.jog[data-deck="${deck.id}"]`);
   if (jog) { jog.setAttribute('aria-valuemax', String(deck.duration || 0)); jog.setAttribute('aria-valuenow', String(deck.currentTime || 0)); }
 }
@@ -1639,6 +1643,7 @@ function updateHeadphoneMix() {
 }
 
 function bindClassicControls() {
+  bindAppearanceSettings();
   for (const button of document.querySelectorAll('[data-action="cue"]')) {
     const id = Number(button.dataset.deck);
     button.addEventListener('pointerdown', event => { if (event.button !== 0) return; button.setPointerCapture(event.pointerId); cuePress(id); });
@@ -1734,4 +1739,147 @@ function createCrate() {
   const crate = {id:crypto.randomUUID(), name}; state.crates.push(crate); input.value = '';
   try { localStorage.setItem('iykCrates', JSON.stringify(state.crates)); } catch { setStatus('Crate created for this session only'); }
   renderCrates(); document.getElementById('crateDestination').value = crate.id;
+}
+
+function restoreAppearance(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  const target = state.settings.appearance;
+  const choices = {
+    mixerStyle:['vertical','horizontal','knobs'], waveformLayout:['stacked','decks'],
+    interfaceDensity:['comfortable','compact'], interfaceTheme:['dark','contrast','daylight'],
+    defaultPerformanceTab:['hotcues','effects'], meterMode:['peak','rms'],
+  };
+  for (const [key, values] of Object.entries(choices)) if (values.includes(saved[key])) target[key] = saved[key];
+  if (Number.isFinite(saved.waveformHeight)) target.waveformHeight = Math.max(35,Math.min(120,Math.round(saved.waveformHeight/5)*5));
+  for (const [key,values] of Object.entries({waveformSeconds:[6,12,24],interfaceSize:[100,115,130],meterHold:[0,1000,3000]})) {
+    if (values.includes(saved[key])) target[key] = saved[key];
+  }
+  for (const key of ['showJog','showOverview','reduceMotion']) if (typeof saved[key] === 'boolean') target[key] = saved[key];
+}
+function syncAppearanceSettings() {
+  for (const [key,value] of Object.entries(state.settings.appearance)) {
+    const input = document.getElementById(key);
+    if (!input) continue;
+    if (input.type === 'checkbox') input.checked = value; else input.value = String(value);
+  }
+  document.getElementById('waveformHeightValue').textContent = `${state.settings.appearance.waveformHeight} px`;
+}
+function applyAppearance() {
+  const value = state.settings.appearance;
+  const body = document.body;
+  body.dataset.mixerStyle = value.mixerStyle;
+  body.dataset.waveformLayout = value.waveformLayout;
+  body.dataset.density = value.interfaceDensity;
+  body.dataset.theme = value.interfaceTheme;
+  body.dataset.showJog = String(value.showJog);
+  body.dataset.showOverview = String(value.showOverview);
+  body.dataset.interfaceSize = String(value.interfaceSize);
+  document.documentElement.style.setProperty('--wave-height',`${value.waveformHeight}px`);
+  document.documentElement.style.setProperty('--text-scale',String(value.interfaceSize/100));
+  const rack = document.getElementById('waveformRack');
+  rack.hidden = value.waveformLayout !== 'stacked';
+  for (const deck of deckState) {
+    const canvas = document.getElementById(`detail${deckLetter(deck.id)}`);
+    if (value.waveformLayout === 'stacked') document.getElementById(`waveLane${deckLetter(deck.id)}`).append(canvas);
+    else {
+      const article = document.querySelector(`.deck-${deckLetter(deck.id).toLowerCase()}`);
+      article.insertBefore(canvas, article.querySelector('.wave-frame'));
+    }
+    syncMixerControlVisuals(deck.id);
+  }
+}
+function setPerformanceTab(id, tab, focus = false) {
+  const letter = deckLetter(id), effects = tab === 'effects';
+  const hot = document.getElementById(`hotTab${letter}`), fx = document.getElementById(`fxTab${letter}`);
+  hot.setAttribute('aria-selected',String(!effects)); fx.setAttribute('aria-selected',String(effects));
+  hot.tabIndex = effects ? -1 : 0; fx.tabIndex = effects ? 0 : -1;
+  document.getElementById(`hotPanel${letter}`).hidden = effects;
+  document.getElementById(`fxPanel${letter}`).hidden = !effects;
+  if (focus) (effects ? fx : hot).focus();
+}
+function syncMixerControlVisuals(id) {
+  document.querySelectorAll(`.channel-strip input[data-deck="${id}"]:not(.channel-fader)`).forEach(input => {
+    const label = input.closest('.mixer-control'); if (!label) return;
+    const value = Number(input.value), min = Number(input.min), max = Number(input.max);
+    label.style.setProperty('--knob-angle',`${-135+(value-min)/(max-min)*270}deg`);
+    label.querySelector('output').textContent = `${value > 0 ? '+' : ''}${value}${input.dataset.role === 'filter' ? '%' : ' dB'}`;
+  });
+}
+function bindAppearanceSettings() {
+  for (const [key, initial] of Object.entries(appearanceDefaults)) {
+    const input = document.getElementById(key);
+    input.addEventListener('input', () => {
+      state.settings.appearance[key] = typeof initial === 'boolean' ? input.checked : typeof initial === 'number' ? Number(input.value) : input.value;
+      applyAppearance(); syncAppearanceSettings(); saveSettings();
+      if (key === 'defaultPerformanceTab') for (const deck of deckState) setPerformanceTab(deck.id,input.value);
+    });
+  }
+  document.getElementById('resetAppearanceBtn').addEventListener('click', () => {
+    state.settings.appearance = {...appearanceDefaults};
+    applyAppearance(); syncAppearanceSettings(); saveSettings();
+    for (const deck of deckState) setPerformanceTab(deck.id,'hotcues');
+  });
+  document.querySelectorAll('[data-tab]').forEach(button => {
+    const id = Number(button.dataset.deck);
+    button.addEventListener('click', () => setPerformanceTab(id,button.dataset.tab));
+    button.addEventListener('keydown', event => {
+      if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) {
+        event.preventDefault();
+        setPerformanceTab(id,event.key === 'Home' ? 'hotcues' : event.key === 'End' ? 'effects' : button.dataset.tab === 'effects' ? 'hotcues' : 'effects',true);
+      }
+    });
+  });
+  document.querySelectorAll('[data-fx]').forEach(button => button.addEventListener('click', () => {
+    const id = Number(button.dataset.deck);
+    const select = document.querySelector(`[data-role="effect"][data-deck="${id}"]`);
+    select.value = button.dataset.fx; select.dispatchEvent(new Event('change',{bubbles:true}));
+  }));
+  document.querySelectorAll('.mixer-control input').forEach(input => {
+    let drag = null;
+    input.addEventListener('pointerdown', event => {
+      if (state.settings.appearance.mixerStyle !== 'knobs' || event.button !== 0) return;
+      event.preventDefault(); input.focus(); input.setPointerCapture(event.pointerId);
+      drag = {y:event.clientY,value:Number(input.value)};
+    });
+    input.addEventListener('pointermove', event => {
+      if (!drag) return;
+      const min=Number(input.min),max=Number(input.max),step=Number(input.step || 1);
+      input.value=String(Math.round(Math.max(min,Math.min(max,drag.value+(drag.y-event.clientY)*(max-min)/150))/step)*step);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    input.addEventListener('pointerup', () => {drag=null;}); input.addEventListener('pointercancel', () => {drag=null;});
+    input.addEventListener('dblclick', () => {input.value='0';input.dispatchEvent(new Event('input',{bubbles:true}));});
+  });
+}
+function createStereoTap(ctx, output) {
+  if (!ctx.createChannelSplitter) return null;
+  const input = ctx.createGain(); input.channelCount = 2; input.channelCountMode = 'explicit'; input.channelInterpretation = 'speakers';
+  const split = ctx.createChannelSplitter(2); output.connect(input); input.connect(split);
+  const channels = [0,1].map(index => {
+    const analyser = ctx.createAnalyser(); analyser.fftSize = 256; split.connect(analyser,index);
+    return {analyser, samples:new Float32Array(analyser.fftSize),held:0,holdUntil:0};
+  });
+  return {input,split,channels};
+}
+function calculateMeter(samples, mode) {
+  let peak = 0, squares = 0;
+  for (const value of samples) {peak=Math.max(peak,Math.abs(value));squares+=value*value;}
+  return {peak, level:mode === 'rms' ? Math.sqrt(squares/Math.max(1,samples.length)) : peak};
+}
+function updateStereoMeter(tap, prefix) {
+  if (!tap) return;
+  const settings=state.settings.appearance, now=performance.now();
+  tap.channels.forEach((channel,index) => {
+    channel.analyser.getFloatTimeDomainData(channel.samples);
+    const {peak,level}=calculateMeter(channel.samples,settings.meterMode);
+    const db=20*Math.log10(Math.max(.00001,level));
+    const shown=Math.max(0,Math.min(1,(db+60)/60));
+    if (shown>=channel.held || now>channel.holdUntil) {channel.held=shown;channel.holdUntil=now+settings.meterHold;}
+    const rail=document.getElementById(`meter${prefix}${index===0?'L':'R'}`);
+    if (!rail) return;
+    rail.querySelector('.meter-cover').style.height=`${(1-shown)*100}%`;
+    const hold=rail.querySelector('.meter-hold'); hold.hidden=settings.meterHold===0;hold.style.bottom=`${channel.held*100}%`;
+    rail.classList.toggle('is-clipping',peak>=.99);
+    rail.setAttribute('aria-valuenow',Math.min(1,level).toFixed(3)); rail.setAttribute('aria-valuetext',`${db.toFixed(1)} dBFS`);
+  });
 }

@@ -383,3 +383,28 @@ test('cancel returns a preloaded unplayed track to the queue', () => {
     state.queue=['later']; renderQueue=()=>{}; cancelAutoMix();`);
   assert.equal(h.run('state.queue.join(",")'),'reserved,later');
 });
+
+test('appearance defaults are vertical controls and stacked waves', () => {
+  const h=harness();
+  assert.equal(h.run('state.settings.appearance.mixerStyle'),'vertical');
+  assert.equal(h.run('state.settings.appearance.waveformLayout'),'stacked');
+});
+
+test('appearance restoration validates choices and bounds without losing audio settings', () => {
+  const h=harness();
+  h.run(`restoreAppearance({mixerStyle:'knobs',waveformLayout:'decks',waveformHeight:500,interfaceSize:130,meterHold:3000,showJog:false});`);
+  assert.equal(h.run('state.settings.appearance.mixerStyle'),'knobs');
+  assert.equal(h.run('state.settings.appearance.waveformHeight'),120);
+  assert.equal(h.run('state.settings.appearance.showJog'),false);
+  h.run(`restoreAppearance({mixerStyle:'bad',waveformSeconds:99,interfaceSize:NaN});`);
+  assert.equal(h.run('state.settings.appearance.mixerStyle'),'knobs');
+  assert.equal(h.run('state.settings.appearance.waveformSeconds'),12);
+  assert.equal(h.run('state.settings.masterVolume'),90);
+});
+
+test('peak and RMS meters calculate each channel independently', () => {
+  const h=harness();
+  const result=h.run(`({left:calculateMeter(new Float32Array([.8,-.8,0,0]),'peak'),right:calculateMeter(new Float32Array([.08,-.08,0,0]),'peak'),rms:calculateMeter(new Float32Array([.8,-.8,0,0]),'rms')})`);
+  assert.ok(result.left.level>result.right.level*9);
+  assert.ok(Math.abs(result.rms.level-Math.sqrt(.32))<.00001);
+});
