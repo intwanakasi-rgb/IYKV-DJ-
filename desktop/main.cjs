@@ -10,6 +10,8 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
+    fullscreen: true,
+    autoHideMenuBar: true,
     height: 960,
     minWidth: 900,
     minHeight: 680,
@@ -21,6 +23,17 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'F11') {
+      event.preventDefault();
+      window.setFullScreen(!window.isFullScreen());
+    } else if (input.key === 'Escape' && window.isFullScreen()) {
+      event.preventDefault();
+      window.setFullScreen(false);
+    }
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
