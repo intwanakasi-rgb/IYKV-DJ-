@@ -1,0 +1,28 @@
+name: Publish Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run package:win
+      - name: Publish installer to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(Get-ChildItem dist/desktop -File | Where-Object { $_.Name -eq "IYK-DeckLab-Windows-Installer.exe" -or $_.Name -like "*.nsis.7z" } | ForEach-Object { $_.FullName })
+          if (-not ($assets | Where-Object { $_ -like "*IYK-DeckLab-Windows-Installer.exe" })) { throw "No Windows installer was produced." }
+          gh release create "$env:GITHUB_REF_NAME" $assets --title "IYK DeckLab $env:GITHUB_REF_NAME" --generate-notes

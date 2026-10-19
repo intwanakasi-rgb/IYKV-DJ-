@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111014">
+    <meta name="description" content="IYK DeckLab is a free, local-first DJ mixing workspace by Intwana Yase Kasi.">
+    <title>IYK DeckLab</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="IYK DeckLab home"><span class="brand-mark">IYK</span><span>DeckLab<small>BY INTWANA YASE KASI</small></span></a>
+      <div class="topbar-center"><span class="live-dot"></span><span id="statusPill" role="status">Ready to mix</span><span class="status-divider"></span><span id="audioStatus">AUDIO ENGINE IDLE</span></div>
+      <div class="topbar-actions">
+        <button class="button button-quiet settings-button" id="settingsBtn" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">⚙ <span>Settings</span></button>
+        <a class="button button-quiet downloads-button" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest/download/IYK-DeckLab-Windows-Installer.exe" aria-label="Download the latest Windows installer" title="Download the latest Windows installer">↓ <span>Download Windows</span></a>
+        <label class="button button-quiet import-button" for="fileInput">＋ <span>Import tracks</span></label>
+        <input id="fileInput" type="file" accept="audio/*" multiple hidden>
+        <button class="button button-record" id="recordBtn" type="button" title="Start or stop a local master recording"><span class="record-dot"></span><span>Record</span><time id="recordTime">00:00</time></button>
+        <button class="button button-stop" id="stopAllBtn" type="button" title="Stop both decks">■ <span>Stop all</span></button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="mixer-area" aria-label="Two deck DJ mixer">
+        <div class="decks">
+          <article class="deck deck-a" aria-label="Deck A">
+            <div class="deck-heading"><span class="deck-letter">A</span><span class="deck-tag">LEFT DECK</span><button class="icon-button" type="button" data-action="load" data-deck="0" title="Load track to deck A" aria-label="Load track to deck A">＋</button></div>
+            <div class="track-line"><div class="track-copy"><h1 id="trackNameA">No track loaded</h1><p>LOCAL LIBRARY</p></div><div class="bpm-display" id="bpmA">120 BPM</div></div>
+            <div class="wave-frame"><canvas id="visualA" aria-label="Deck A live spectrum"></canvas><div class="wave-time"><span id="timeA">00:00</span><span id="durationA">00:00</span></div></div>
+            <input class="seek-control" data-role="seek" data-deck="0" aria-label="Seek deck A" type="range" min="0" max="1000" value="0">
+            <div class="transport"><button class="transport-button cue-button" type="button" data-action="cue" data-deck="0"><span>↺</span> CUE</button><button class="play-button" type="button" data-action="play" data-deck="0" aria-label="Play deck A">▶</button><button class="transport-button" type="button" data-action="pause" data-deck="0"><span>Ⅱ</span> PAUSE</button></div>
+            <div class="loop-row"><span class="section-label">LOOP</span><button type="button" data-action="loop" data-deck="0">4 BEAT LOOP</button><span class="loop-state" id="loopStateA">OFF</span></div>
+            <div class="tempo-row"><label for="tempoA">PITCH <span class="tempo-value" id="tempoValueA">0%</span></label><input id="tempoA" data-role="tempo" data-deck="0" type="range" min="-10" max="10" value="0"><span class="range-edge">±10%</span></div>
+            <div class="channel-controls">
+              <div class="eq-bank"><span class="section-label">3-BAND EQ</span><div class="eq-knobs"><label class="knob-control"><span>HIGH</span><input data-role="high" data-deck="0" type="range" min="-12" max="12" value="0"><b>0</b></label><label class="knob-control"><span>MID</span><input data-role="mid" data-deck="0" type="range" min="-12" max="12" value="0"><b>0</b></label><label class="knob-control"><span>LOW</span><input data-role="low" data-deck="0" type="range" min="-12" max="12" value="0"><b>0</b></label></div></div>
+              <label class="volume-control"><span class="section-label">CHANNEL</span><input data-role="volume" data-deck="0" type="range" min="0" max="100" value="80"><span>LEVEL</span></label>
+            </div>
+            <div class="fx-controls"><label for="effectA">EFFECT</label><select id="effectA" data-role="effect" data-deck="0"><option value="off">Off</option><option value="filter">Low-pass filter</option><option value="echo">Echo</option></select><label for="effectAmountA">AMOUNT</label><input id="effectAmountA" data-role="effect-amount" data-deck="0" type="range" min="0" max="100" value="50"><output id="effectValueA" for="effectAmountA">50%</output></div>
+          </article>
+
+          <article class="deck deck-b" aria-label="Deck B">
+            <div class="deck-heading"><span class="deck-letter">B</span><span class="deck-tag">RIGHT DECK</span><button class="icon-button" type="button" data-action="load" data-deck="1" title="Load track to deck B" aria-label="Load track to deck B">＋</button></div>
+            <div class="track-line"><div class="track-copy"><h2 id="trackNameB">No track loaded</h2><p>LOCAL LIBRARY</p></div><div class="bpm-display" id="bpmB">120 BPM</div></div>
+            <div class="wave-frame"><canvas id="visualB" aria-label="Deck B live spectrum"></canvas><div class="wave-time"><span id="timeB">00:00</span><span id="durationB">00:00</span></div></div>
+            <input class="seek-control" data-role="seek" data-deck="1" aria-label="Seek deck B" type="range" min="0" max="1000" value="0">
+            <div class="transport"><button class="transport-button cue-button" type="button" data-action="cue" data-deck="1"><span>↺</span> CUE</button><button class="play-button" type="button" data-action="play" data-deck="1" aria-label="Play deck B">▶</button><button class="transport-button" type="button" data-action="pause" data-deck="1"><span>Ⅱ</span> PAUSE</button></div>
+            <div class="loop-row"><span class="section-label">LOOP</span><button type="button" data-action="loop" data-deck="1">4 BEAT LOOP</button><span class="loop-state" id="loopStateB">OFF</span></div>
+            <div class="tempo-row"><label for="tempoB">PITCH <span class="tempo-value" id="tempoValueB">0%</span></label><input id="tempoB" data-role="tempo" data-deck="1" type="range" min="-10" max="10" value="0"><span class="range-edge">±10%</span></div>
+            <div class="channel-controls">
+              <div class="eq-bank"><span class="section-label">3-BAND EQ</span><div class="eq-knobs"><label class="knob-control"><span>HIGH</span><input data-role="high" data-deck="1" type="range" min="-12" max="12" value="0"><b>0</b></label><label class="knob-control"><span>MID</span><input data-role="mid" data-deck="1" type="range" min="-12" max="12" value="0"><b>0</b></label><label class="knob-control"><span>LOW</span><input data-role="low" data-deck="1" type="range" min="-12" max="12" value="0"><b>0</b></label></div></div>
+              <label class="volume-control"><span class="section-label">CHANNEL</span><input data-role="volume" data-deck="1" type="range" min="0" max="100" value="80"><span>LEVEL</span></label>
+            </div>
+            <div class="fx-controls"><label for="effectB">EFFECT</label><select id="effectB" data-role="effect" data-deck="1"><option value="off">Off</option><option value="filter">Low-pass filter</option><option value="echo">Echo</option></select><label for="effectAmountB">AMOUNT</label><input id="effectAmountB" data-role="effect-amount" data-deck="1" type="range" min="0" max="100" value="50"><output id="effectValueB" for="effectAmountB">50%</output></div>
+          </article>
+        </div>
+
+        <section class="mix-strip" aria-label="Master mixer">
+          <div class="mix-strip-head"><span class="section-label">MASTER MIX</span><div class="master-actions"><button class="button button-sync" id="syncBpmBtn" type="button">⟷ <span>SYNC</span></button><button class="button button-quiet" id="toggleAutoMixBtn" type="button">AUTO MIX</button></div></div>
+          <div class="crossfader-row"><span class="channel-label label-a">A</span><input id="crossfader" aria-label="Crossfader" type="range" min="0" max="100" value="50"><span class="channel-label label-b">B</span><div class="master-meter"><span class="meter-label">MASTER</span><div class="meter-track"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+        </section>
+      </section>
+
+      <aside class="library-panel" aria-label="Music library">
+        <div class="library-heading"><div><p class="eyebrow">YOUR COLLECTION</p><h2>Library <span id="trackCount">0</span></h2></div><label class="icon-button import-icon" for="fileInput" title="Import audio files" aria-label="Import audio files">＋</label></div>
+        <div class="library-tools"><label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="Search tracks" aria-label="Search tracks"></label><select id="sortSelect" aria-label="Sort tracks"><option value="added">Recently added</option><option value="name">Track name</option></select></div>
+        <div class="midi-tools"><label for="midiTarget">LEARN TARGET</label><select id="midiTarget" aria-label="MIDI learn target"><option value="play-0">Deck A play</option><option value="cue-0">Deck A cue</option><option value="volume-0">Deck A level</option><option value="low-0">Deck A low EQ</option><option value="mid-0">Deck A mid EQ</option><option value="high-0">Deck A high EQ</option><option value="effect-amount-0">Deck A effect amount</option><option value="play-1">Deck B play</option><option value="cue-1">Deck B cue</option><option value="volume-1">Deck B level</option><option value="low-1">Deck B low EQ</option><option value="mid-1">Deck B mid EQ</option><option value="high-1">Deck B high EQ</option><option value="effect-amount-1">Deck B effect amount</option><option value="crossfader">Crossfader</option></select><button id="midiLearnBtn" class="midi-learn" type="button">MIDI LEARN</button></div>
+        <div class="library-columns"><span>TRACK</span><span>LOAD TO DECK</span></div>
+        <ul id="playlist" class="playlist" aria-label="Imported tracks"></ul>
+        <div class="library-empty" id="libraryEmpty"><div class="empty-icon">♫</div><p>Your crate is empty</p><span>Import audio files to start building your library.</span><label for="fileInput" class="button button-quiet">＋ Import audio</label></div>
+        <div class="library-footer"><span class="library-led"></span><span id="librarySummary">0 tracks in library</span><a class="supported-formats download-link" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases" target="_blank" rel="noopener noreferrer">ALL VERSIONS</a></div>
+      </aside>
+    </main>
+    <input id="hiddenFileInput" type="file" accept="audio/*" hidden>
+    <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+      <form method="dialog" class="settings-panel">
+        <div class="settings-heading"><div><p class="eyebrow">MIXER PREFERENCES</p><h2 id="settingsTitle">Settings</h2></div><button class="icon-button" value="close" aria-label="Close settings">×</button></div>
+        <label class="settings-control" for="masterVolume">MASTER OUTPUT <output id="masterVolumeValue">90%</output><input id="masterVolume" type="range" min="0" max="100" value="90"></label>
+        <label class="settings-control" for="autoMixDuration">AUTO MIX LENGTH <output id="autoMixDurationValue">12 sec</output><input id="autoMixDuration" type="range" min="4" max="30" step="1" value="12"></label>
+        <label class="settings-control" for="crossfaderCurve">CROSSFADER CURVE<select id="crossfaderCurve"><option value="equal-power">Equal power</option><option value="linear">Linear</option></select></label>
+        <p class="settings-note">Preferences and deck controls are saved in this browser on this device.</p>
+      </form>
+    </dialog>
+  </body>
+</html>

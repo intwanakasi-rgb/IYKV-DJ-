@@ -1,0 +1,55 @@
+{
+  "name": "iyk-decklab",
+  "version": "0.1.0",
+  "description": "Free, local-first DJ mixing workspace by Intwana Yase Kasi",
+  "author": "Intwana Yase Kasi",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "web:dev": "vite --host 0.0.0.0",
+    "web:build": "vite build --base=./ --outDir dist/web",
+    "desktop": "electron .",
+    "package:win": "electron-builder --win nsis --x64",
+    "package:linux": "electron-builder --linux AppImage --x64"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.3.4"
+  },
+  "build": {
+    "appId": "org.intwanayasekasi.decklab",
+    "productName": "IYK DeckLab",
+    "directories": {
+      "output": "dist/desktop"
+    },
+    "files": [
+      "index.html",
+      "app.js",
+      "styles.css",
+      "README.md",
+      "LICENSE",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "IYK-DeckLab-Windows-Installer.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "IYK-DeckLab-${version}.${ext}"
+    }
+  }
+}
