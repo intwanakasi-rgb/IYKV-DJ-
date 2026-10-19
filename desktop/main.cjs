@@ -17,6 +17,7 @@ function createWindow() {
     title: 'IYK DeckLab',
     webPreferences: {
       contextIsolation: true,
+      backgroundThrottling: false,
       nodeIntegration: false,
       sandbox: true,
     },
@@ -35,10 +36,10 @@ function createWindow() {
 app.whenReady().then(() => {
   const isTrusted = (contents) => contents?.getURL() === appUrl;
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
-    callback(permission === 'midi' && isTrusted(contents));
+    callback(['midi', 'speaker-selection'].includes(permission) && isTrusted(contents));
   });
   session.defaultSession.setPermissionCheckHandler((contents, permission) =>
-    permission === 'midi' && isTrusted(contents));
+    ['midi', 'speaker-selection'].includes(permission) && isTrusted(contents));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

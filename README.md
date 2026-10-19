@@ -1,78 +1,87 @@
 # IYK DeckLab
 
-**IYK DeckLab by Intwana Yase Kasi** is a free, local-first two/four-deck DJ practice project. It currently runs in a modern browser and can be packaged as an Electron desktop application. It has no account, subscription, advertisement, sample pack, or cloud dependency.
+**Free DJ practice and mixing software by Intwana Yase Kasi.** No accounts, subscriptions, feature paywalls, advertisements or mandatory cloud service. Local music stays on the device.
 
-## Current status
+## Classic workspace
 
-This repository is an early Web Audio prototype, not yet a professional low-latency DJ release. The completed interface and code paths are listed below; unverified or incomplete features are not represented as supported.
+- Two/four decks around a central channel mixer; track browser and Automix queue underneath.
+- Per-channel gain, three-band EQ, bipolar filter, vertical level fader, peak meter and PFL.
+- Scrolling prepared waveform, full-track overview, cue markers, estimated beat grid, elapsed/remaining time, editable BPM and beat anchor.
+- Jog seeking, temporary pitch nudges, selectable beat loops, eight persistent hot cues per track, filter/echo effects and keyboard controls.
+- Browser search, BPM/duration/name sorting, favourites, custom crates, drag-to-deck loading and persistent local audio library.
+- Channel-aware Web MIDI Learn with soft takeover, cue press/release, gain, filter, EQ, pitch, effect amount and level targets. Physical devices are not certified.
+- Master recording and output peak protection through a Web Audio compressor.
 
-| Area | Current implementation | Status |
-| --- | --- | --- |
-| Decks | Two local-file decks, independent transport, seek, pitch playback-rate adjustment, 3-band EQ, channel level and selectable equal-power/linear crossfader | Browser implementation; hardware/audio latency not measured |
-| Effects and settings | Per-deck low-pass filter and echo with adjustable amount; saved master output level, Auto Mix duration, crossfader curve, channel, EQ, pitch and effect preferences | Preferences are stored in the current browser profile |
-| Auto Mix | Starts any stopped deck before fading, checks that both tracks are loaded, and pauses the outgoing deck after the transition | Fixed tempo/beat alignment is not automatic; match BPM manually when needed |
-| Sync | Matches deck B's manually selected BPM to deck A | Manual BPM values only; no automatic BPM/beat-grid analysis |
-| Library | IndexedDB-backed imported audio files, search by filename, sort by added/name, select a deck using its load button | No folder scan, metadata editor, playlist/crate, or missing-file relocation |
-| Cue and loop | One persistent cue point and manually started 4-beat loop per imported track | No hot-cue bank, quantisation, editable beat-grid, or automatic loop alignment |
-| Recording | Captures the master mix through MediaRecorder and downloads WebM/Opus or Ogg where supported | Browser codec/container support varies; no crash recovery or tracklist sidecar |
-| Controller | Basic Web MIDI Learn for transport, channel level, EQ, effect amount and crossfader; mappings persist in local storage | Chromium/secure-context dependent; channel-aware mappings and soft takeover; no MIDI output, conflict editor, mapping import/export, or physical hardware verification |
-| Metering | Live spectrum and master RMS meter from the audio graph | Not a calibrated peak/clipping meter |
-| Platforms | Web practice build and Electron desktop packaging configuration | Windows artifact is not built/tested in this Linux workspace; macOS, Linux and mobile are not supported releases |
+The native desktop audio engine described in `docs/ARCHITECTURE.md` is still future work. This release uses Web Audio and HTML media, including in Electron. It is not equivalent to VirtualDJ's professional engine.
 
-## Run locally
+## First session
 
-Requirements: Node.js 22.12 or newer and npm (matching the locked toolchain).
+1. Import audio files. Importing never replaces a playing track.
+2. With playback paused, use **ANALYSE** to prepare waveforms and estimate BPM. Analysis is local, serialised, and uses a worker. For browser memory limits, files must be at most 100 MB and decoded tracks at most 30 minutes.
+3. Load a track with A/B/C/D or drag it onto a deck. Verify estimated BPM (`≈`), correct the BPM field if necessary, and use **SET BEAT** on a known beat. Analysis cannot reliably infer musical downbeats or variable-tempo grids.
+4. Use **SET CUE** to store a cue explicitly. CUE during playback returns to that cue; when paused, hold CUE to preview and release to return. Press Play while holding CUE to keep playing.
+5. An empty hot-cue pad saves its position. A filled pad jumps and starts playback. Shift+click clears it. Click a deck to select it for keyboard control: Space toggles playback; number keys 1–8 trigger pads when not editing another control.
+6. SYNC has selectable master and target decks. It matches tempo within ±10% and aligns running tracks to their grid phase. Verify estimated grids by ear. It does not continuously correct drift or provide phrase/variable-tempo sync.
+
+A/B use the crossfader. C/D are independent channels controlled by their faders. Switching to two decks pauses C/D and disables their headphone cues.
+
+## Queued Automix
+
+Use **+ QUEUE** on tracks and press **START** or **AUTOMIX**. If no track is loaded, the first queued track loads into A. The next track preloads into the other A/B deck but stays paused until the outgoing track approaches its end. Automix fades using the configured transition length, pauses the outgoing deck and continues through the queue. **MIX NOW** starts the transition early. An active loop holds automatic advance until disabled or Mix Now is pressed.
+
+Stopping Automix leaves the audible track playing for manual control. **Stop all** stops playback and automation. Moving the A/B crossfader or manually operating an A/B transport cancels automation. Queue contents persist but automation never starts automatically after reopening. C/D are not part of the queue.
+
+Fades use audio-clock gain curves and desktop background throttling is disabled. Browsers can still throttle background queue timers. For unattended playback, verify the desktop build on the actual machine.
+
+## Headphone preview
+
+Open **Settings → Refresh devices**, select a physically separate headphone device, and use channel **PFL** buttons. Set headphone level and cue/master blend there. Cue audio is tapped before the channel fader, so tracks can be previewed with their master channel muted.
+
+This requires `setSinkId` support and output devices exposed by the runtime/permissions. Master uses the system default device. Do not select that same physical output for headphones. Device-based routing is not ASIO or channel-pair routing on a professional multichannel interface. Hardware routing and latency must be tested on the target setup. An unavailable output is reported explicitly; the application does not simulate headphone separation.
+
+## Library and crates
+
+Create a crate in the browser sidebar, choose its destination in the toolbar, and use **+ CRATE** on any track. Select the crate to view its tracks; **− CRATE** removes membership without deleting audio. Favourites, cues, loops, preparation data and audio files are stored in IndexedDB. Crate definitions, settings, MIDI mappings and queue IDs are local preferences. Browser profile removal deletes this local data; there is no cloud backup.
+
+Track names come from filenames. Full ID3/artwork/key analysis, filesystem folder browsing and external-drive relocation are not implemented.
+
+## Run and test
+
+Use Node.js 22.12 or newer and npm.
 
 ```sh
 npm ci
 npm run web:dev
-```
-
-Open the local URL printed by Vite. Browser audio and MIDI permissions depend on browser policy; MIDI usually needs HTTPS or localhost and a compatible Chromium-based browser. The application does not upload imported audio.
-
-## Desktop builds
-
-```sh
-npm ci
 npm run desktop
 ```
 
-Build the Windows x64 NSIS installer on Windows:
+Browser MIDI generally requires HTTPS/localhost and a compatible browser. All platforms require actual audio/controller testing.
 
 ```sh
-npm ci
-npm run package:win
+npm test
+npm run check
+npm run web:build
+npx playwright install chromium
+npm run test:browser
 ```
 
-Click **Download Windows** in the app to download the latest installer directly, or open [All versions](https://github.com/intwanakasi-rgb/IYKV-DJ-/releases) to choose a release. The stable direct installer link works once a release has been published. Pushing a version tag such as `v0.1.0` runs the release workflow and attaches the unsigned Windows installer and its package archive. Until a version is published, the [Windows desktop build workflow](https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/windows.yml) provides a `IYK-DeckLab-Windows` artifact (available for 14 days). The installer is not code-signed; SmartScreen reputation requires a publisher certificate. A Windows runner and compatible audio hardware are needed to verify the actual desktop experience.
+The browser test serves the app locally, generates its own WAV tracks, checks real audio graph output, worker preparation, cue preview, hot cues, crates/favourites, queue progression, persistence and responsive layout. It does not certify physical audio hardware. `CHROMIUM_EXECUTABLE` can select an existing Chromium binary. Test-only hooks are added by the test server and are absent from the shipped application.
 
-Build the static web version with `npm run web:build`. The Pages workflow deploys it after the repository is pushed to GitHub and GitHub Pages is enabled. No online deployment or tagged release has been performed from this workspace.
+## Desktop installers and release downloads
 
-## Audio architecture decision
+```sh
+npm run package:win
+npm run package:linux
+```
 
-The inherited application is built around the browser Web Audio API, so this Phase 1 foundation preserves that runnable code rather than pretending it already has native device access. Web Audio gives this project a small, no-account practice build, but it cannot provide the promised dedicated real-time audio callback, ASIO configuration, configurable native buffer sizes, reliable headphone routing, or measured low-latency guarantees.
+Packaging explicitly uses `--publish never`; installers are uploaded as workflow artifacts. The Windows workflow builds pull requests and main. An artifact ZIP expires after 14 days and private-repository downloads require access.
 
-Before a native-engine migration, verify the exact current licenses, backend coverage, decoder terms, and supported hardware against upstream project documentation. The shortlist to evaluate is **RtAudio + RtMidi** (permissive MIT-licensed audio/MIDI layers, with backend availability dependent on platform/build), versus **miniaudio** (permissive MIT-licensed single-header audio layer; verify backend and ASIO requirements). A native engine would own playback, mixing, device routing, recording, and MIDI; UI, analysis, library indexing, and waveform rendering must communicate with it through bounded queues and stay outside the real-time callback. This repository does not bundle either framework and has not yet adopted that native architecture. JUCE's dual GPL/commercial model needs a separate distribution decision and is not included.
+[Windows builds](https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/windows.yml) · [Releases](https://github.com/intwanakasi-rgb/IYKV-DJ-/releases)
 
-## Free software and licenses
+Publishing a `v*` tag or manually running **Publish Windows release** with a version builds and uploads the installer to a GitHub release using the workflow token. The direct latest-installer link works only after a release exists. Repository privacy still controls access. Installers are unsigned. Windows builds, Linux packaging, macOS and mobile support must not be represented as hardware-verified until tested. Android/iOS apps and macOS packaging are not implemented.
 
-Project code is MIT licensed. Electron, electron-builder, and Vite are build dependencies; their upstream licenses are MIT. Electron and its transitive runtime dependencies carry additional notices, which must be included with distributed packages. Run `npm ci` and inspect the exact lockfile/dependency license notices before publishing binaries. No audio decoders, machine-learning models, copyrighted music, or sample packs are bundled. Users are responsible for having rights to music they play or record.
+## Remaining professional release work
 
-## Roadmap
+Native low-latency audio/device routing, ASIO, multichannel headphone outputs, sample-accurate loops, scratch-quality jog/HID/DVS handling, hardware presets/LED output, stems, sampler, video/karaoke/broadcasting, robust recording-to-disk/crash recovery, metadata/key detection and variable-tempo grids remain future work. Browser analysis estimates are a preparation aid, not a guarantee of correct beat/downbeat detection.
 
-1. **Phase 1 foundation:** replace the Web Audio prototype with a tested native shared engine; verify independent playback, EQ, gain, pitch, loops, recording, persistence, and MIDI Learn on documented Windows hardware; add automated engine/integration tests.
-2. **Performance and desktop expansion:** device routing, headphone cue, mappings and recovery; then tested macOS and documented Linux builds.
-3. **Advanced tools:** hot cues, four decks, prepared stems, sampler, broadcasting, lessons.
-4. **Mobile and ecosystem:** touch applications, local-network companion, practice web build, optional IYK services.
-
-Nothing in phases 2–4 is represented as implemented. Android and iOS need native app/audio integrations and separate physical-device testing. Platform support, performance, latency, and controller compatibility must be reported only after testing on the actual target hardware.
-
-## Reliability checks
-
-Run `npm test`, `npm run check`, and `npm run web:build` before submitting changes. Tests cover Auto Mix, audio graph wiring, track identity and import safety, tempo consistency, MIDI mapping and pickup, and Electron readiness using controlled mocks. Hardware and audible output still require physical testing. See [the reliability review](docs/REVIEW.md) for fixes, limitations, and release gates. Re-learn existing controller mappings after upgrading: new mappings distinguish MIDI channels.
-
-## Two or four decks
-
-Choose **2 decks** or **4 decks** above the mixer. C/D have independent transport, pitch, EQ, effects, cue, loop, channel level, library load buttons, and MIDI Learn targets. Switching back to two decks pauses and hides C/D; their loaded tracks remain available. The layout preference is saved locally.
-
-Crossfader, Sync, and Auto Mix operate on **A/B only**. C/D are extra channels controlled by their level sliders and are included in master recording. Auto Mix first puts the crossfader fully on the outgoing A/B deck so the incoming track cannot leak before the timed fade. It then overlaps tracks during the configured transition and pauses the outgoing deck on completion. It is a user-triggered transition, not an unattended playlist queue or beat-aligned mix.
+Project code is MIT licensed. Build/runtime dependency notices must accompany distributions; no copyrighted music, sample packs or ML models are bundled. Playwright is used only for development tests.

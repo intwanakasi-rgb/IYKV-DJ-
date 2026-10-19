@@ -9,16 +9,16 @@ function harness(saved = {}) {
   const elements = new Map();
   const element = (key) => {
     if (!elements.has(key)) elements.set(key, {
-      value: '0', textContent: '', min: '0', max: '100', type: 'range',
+      value: '0', options: [], textContent: '', min: '0', max: '100', type: 'range',
       classList: { add() {}, remove() {}, toggle() {} },
-      addEventListener() {}, dispatchEvent() {}, selectedOptions: [{ text: 'Test target' }],
+      addEventListener() {}, dispatchEvent() {}, append() {}, appendChild() {}, setAttribute() {}, selectedOptions: [{ text: 'Test target' }],
     });
     return elements.get(key);
   };
   const context = vm.createContext({
-    console, Map, Uint8Array, Event, setTimeout,
+    console, Map, Uint8Array, Event, setTimeout, clearTimeout,
     localStorage: { getItem: (key) => saved[key] ?? null, setItem: (key, value) => { saved[key] = value; } },
-    document: { getElementById: element, querySelector: element, querySelectorAll: () => [] },
+    document: { getElementById: element, querySelector: element, querySelectorAll: () => [], createElement: tag => element('created:'+tag) },
     window: { addEventListener() {} }, navigator: {},
     requestAnimationFrame: () => 1, cancelAnimationFrame() {},
     performance: { now: () => 0 },
@@ -71,11 +71,11 @@ test('MIDI soft takeover waits for crossing and re-arms after mouse changes', ()
 
 test('first Auto Mix starts with a finite generation and pauses outgoing deck', async () => {
   const h = harness();
-  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0, paused:true, pause(){this.paused=true;}}; });
     startDeckPlayback = async d => { d.isPlaying = true; return true; };
     globalThis.frames = []; requestAnimationFrame = fn => { frames.push(fn); return frames.length; };
     globalThis.pausedDeck = null; pauseDeck = id => { pausedDeck = id; };`);
-  await h.run('startAutoMix()');
+  await h.run('mixLoadedDecks()');
   assert.equal(h.run('state.autoMix'), true);
   assert.equal(h.run('state.autoMixRunId'), 1);
   h.run('frames[0](12000)');
@@ -85,10 +85,10 @@ test('first Auto Mix starts with a finite generation and pauses outgoing deck', 
 
 test('cancelled pending Auto Mix cannot start a fade afterwards', async () => {
   const h = harness();
-  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0, paused:true, pause(){this.paused=true;}}; });
     globalThis.pending = [];
     startDeckPlayback = () => new Promise(resolve => pending.push(resolve));`);
-  const start = h.run('startAutoMix()');
+  const start = h.run('mixLoadedDecks()');
   h.run('cancelAutoMix(); pending.forEach(resolve => resolve(true))');
   await start;
   assert.equal(h.run('state.autoMix'), false);
@@ -117,10 +117,11 @@ test('track loading protects a playing deck', async () => {
 
 test('sync rate stays consistent with pitch slider and saved settings', () => {
   const h = harness();
+  h.element('syncTarget').value = '1';
   const slider = h.element('input[data-role="tempo"][data-deck="1"]');
   slider.value = '0';
-  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; });
-    deckState[0].bpm = 160; deckState[1].baseBpm = 100;
+  h.run(`deckState.forEach(d => { d.objectUrl = 'blob:track'; d.audio = {currentTime:0, paused:true, pause(){this.paused=true;}}; });
+    deckState[0].bpm = 160; deckState[1].baseBpm = 100; deckState.forEach(d => d.bpmKnown = true);
     updateDeckAudioFromControls = () => {
       const pitch = Number(document.querySelector('input[data-role="tempo"][data-deck="1"]').value);
       state.settings.decks[1].tempo = pitch; deckState[1].bpm = 100 * (1 + pitch / 100);
@@ -173,8 +174,9 @@ test('desktop installs permission handlers only after Electron ready', async () 
 
 test('loop source boundaries use original BPM when pitch is adjusted', () => {
   const h = harness();
+  h.element('[data-role="loop-length"][data-deck="0"]').value = '4';
   h.run(`deckState[0].audio = {currentTime:10}; deckState[0].duration = 100;
-    deckState[0].baseBpm = 120; deckState[0].bpm = 132;
+    deckState[0].baseBpm = 120; deckState[0].bpm = 132; deckState[0].bpmKnown = true;
     saveLoop = () => {}; toggleLoop(0);`);
   assert.equal(h.run('deckState[0].loopEnd'), 12);
 });
@@ -239,16 +241,16 @@ test('Auto Mix silences incoming A/B deck before starting playback and ignores C
   const h = harness();
   h.element('crossfader').value = '50';
   h.run(`deckState.slice(0,2).forEach(d => {
-    d.objectUrl = 'blob:track'; d.audio = {currentTime:0}; d.gainNode = {gain:{value:1}};
+    d.objectUrl = 'blob:track'; d.audio = {currentTime:0, paused:true, pause(){this.paused=true;}}; d.gainNode = {gain:{value:1}};
   });
   globalThis.started = [];
   startDeckPlayback = async d => {
     if (d.id === 1 && d.gainNode.gain.value !== 0) throw Error('Incoming deck audible before fade');
     started.push(d.id); d.isPlaying = true; return true;
   };`);
-  await h.run('startAutoMix()');
+  await h.run('mixLoadedDecks()');
   assert.equal(h.run('state.autoMix'), true);
-  assert.equal(h.run('started.join(",")'), '0,1');
+  assert.equal(h.run('started.join(",")'), '1');
   assert.equal(h.element('crossfader').value, '0');
 });
 
@@ -273,7 +275,111 @@ test('switching to two decks pauses C/D and removes their load targets', () => {
     setDeckCount(4);`);
   assert.equal(h.run('state.deckCount'), 4);
   assert.equal(h.element('deckC').hidden, false);
-  h.run('setDeckCount(2)');
+  h.run('deckState[2].isPlaying = true; deckState[3].isPlaying = true; setDeckCount(2)');
   assert.equal(h.run('paused.join(",")'), '2,3');
   assert.equal(h.element('deckC').hidden, true);
+});
+
+test('PCM preparation detects 120 BPM clicks and real waveform peaks', () => {
+  const h = harness();
+  const result = h.run(`(() => {
+    const rate=8000, pcm=new Float32Array(rate*20);
+    for (let n=0;n<pcm.length;n++) pcm[n] = n % 4000 < 160 ? Math.sin(n*.5)*.8 : 0;
+    return analysePcm(pcm,rate);
+  })()`);
+  assert.equal(result.waveform.length,4000);
+  assert.ok(result.waveform.some(value => value > .7));
+  assert.ok(Math.abs(result.bpm - 120) < 1);
+  assert.equal(result.duration,20);
+});
+
+test('silent PCM never invents a BPM', () => {
+  const h = harness();
+  assert.equal(h.run('analysePcm(new Float32Array(8000),8000).bpm'),null);
+});
+
+test('CUE returns to saved cue without overwriting it while playing', () => {
+  const h = harness();
+  h.run(`deckState[0].objectUrl='blob:x'; deckState[0].cuePoint=4;
+    deckState[0].audio={currentTime:9}; pauseDeck = () => {deckState[0].isPlaying=false;};
+    updateDeckView=()=>{}; deckState[0].isPlaying=true; cueDeck(0);`);
+  assert.equal(h.run('deckState[0].audio.currentTime'),4);
+  assert.equal(h.run('deckState[0].cuePoint'),4);
+});
+
+test('CUE release before playback promise resolves cannot leave audio playing', async () => {
+  const h = harness();
+  h.run(`deckState[0].objectUrl='blob:x'; deckState[0].audio={currentTime:0};
+    globalThis.finish = null; startDeckPlayback = () => new Promise(resolve => { finish=resolve; });
+    globalThis.returned=0; cueDeck=()=>{returned++;};`);
+  const press = h.run('cuePress(0)');
+  h.run('cueRelease(0); finish(true)'); await press;
+  assert.ok(h.run('returned') >= 1);
+});
+
+test('sync rejects unknown BPM instead of using the 120 fallback', () => {
+  const h = harness(); h.element('syncTarget').value='1';
+  h.run(`deckState[0].objectUrl='a'; deckState[1].objectUrl='b'; syncBpm();`);
+  assert.match(h.element('statusPill').textContent,/Analyse both tracks/);
+});
+
+test('queued Automix preloads next track but leaves it stopped until near end', async () => {
+  const h = harness();
+  h.run(`state.queueEnabled=true; state.queue=["next"]; state.library=[{id:"next",file:{}}];
+    state.queueActive=0; deckState[0].audio={duration:100,currentTime:10,playbackRate:1};
+    deckState[1].audio={currentTime:0};
+    pauseDeck=()=>{}; loadTrackForDeck=async()=>{}; waitForTrack=async()=>{};
+    persistQueue=()=>{}; globalThis.mixed=false; mixLoadedDecks=async()=>{mixed=true;};`);
+  await h.run('queueTick()');
+  assert.equal(h.run('state.queueUpcoming'),1);
+  assert.equal(h.run('mixed'),false);
+  h.run('deckState[0].audio.currentTime=95'); await h.run('queueTick()');
+  assert.equal(h.run('mixed'),true);
+  assert.equal(h.run('state.transitionSeconds'),5);
+});
+
+test('looping track prevents automatic transition until Mix Now', async () => {
+  const h = harness();
+  h.run(`state.queueEnabled=true; state.queueUpcoming=1;
+    deckState[0].audio={duration:100,currentTime:99,playbackRate:1}; deckState[0].loopEnd=100;
+    globalThis.mixed=false; mixLoadedDecks=async()=>{mixed=true;};`);
+  await h.run('queueTick()'); assert.equal(h.run('mixed'),false);
+  await h.run('queueTick(true)'); assert.equal(h.run('mixed'),true);
+});
+
+test('cancelling queued preload prevents stale loading from scheduling a transition', async () => {
+  const h = harness();
+  h.run(`state.queueEnabled=true; state.queue=["next"]; state.library=[{id:"next",file:{}}];
+    state.queueActive=0; deckState[0].audio={duration:100,currentTime:99,playbackRate:1};
+    pauseDeck=()=>{}; globalThis.ready=null; loadTrackForDeck=()=>new Promise(resolve=>{ready=resolve;});
+    waitForTrack=async()=>{}; globalThis.mixed=false; mixLoadedDecks=async()=>{mixed=true;};`);
+  const tick = h.run('queueTick()');
+  h.run('cancelAutoMix(); ready()'); await tick;
+  assert.equal(h.run('state.queueUpcoming'),null);
+  assert.equal(h.run('mixed'),false);
+  assert.equal(h.run('state.queueBusy'),false);
+});
+
+test('PFL uses independent pre-fader gains and respects cue/master blend', () => {
+  const h = harness();
+  h.element('headphoneBlend').value='25'; h.element('headphoneVolume').value='60';
+  h.run(`state.headphoneReady=true; state.headphoneBus={gain:{value:0}}; state.headphoneMaster={gain:{value:0}};
+    deckState[0].pfl=true; deckState[0].cueGain={gain:{value:0}}; updateHeadphoneMix();`);
+  assert.equal(h.run('deckState[0].cueGain.gain.value'),.75);
+  assert.equal(h.run('state.headphoneMaster.gain.value'),.25);
+  assert.equal(h.run('state.headphoneBus.gain.value'),.6);
+});
+
+test('MIDI CC CUE release ends preview, not just note-off', () => {
+  const h = harness();
+  h.run(`state.midiMappings['device:176:7']={action:'cue-0'};
+    globalThis.releases=0; cueRelease=()=>{releases++;}; onMidiMessage({data:[176,7,0]});`);
+  assert.equal(h.run('releases'),1);
+});
+
+test('cancel returns a preloaded unplayed track to the queue', () => {
+  const h = harness();
+  h.run(`state.queueEnabled=true; state.queueUpcoming=1; deckState[1].libraryId='reserved';
+    state.queue=['later']; renderQueue=()=>{}; cancelAutoMix();`);
+  assert.equal(h.run('state.queue.join(",")'),'reserved,later');
 });

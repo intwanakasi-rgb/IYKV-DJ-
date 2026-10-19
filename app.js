@@ -6,7 +6,7 @@ function readMidiMappings() {
       if (!mapping || typeof mapping !== 'object') return false;
       if (mapping.action) return /^(play|cue)-[0-3]$/.test(mapping.action);
       return mapping.role === 'crossfader' ||
-        (['volume', 'low', 'mid', 'high', 'tempo', 'effect-amount'].includes(mapping.role) &&
+        (['volume', 'trim', 'filter', 'low', 'mid', 'high', 'tempo', 'effect-amount'].includes(mapping.role) &&
           ['0', '1', '2', '3'].includes(String(mapping.deck)));
     }));
   } catch {
@@ -92,6 +92,10 @@ const state = {
   autoMixRunId: 0,
   midiPickup: new Map(),
   deckCount: 2,
+  crates: [], activeCrate: null,
+  queue: [], queueEnabled: false, queueEpoch: 0, queueBusy: false,
+  queueActive: 0, queueUpcoming: null, favouritesOnly: false,
+  prepareChain: Promise.resolve(), headphoneReady: false,
   library: [],
   selectedDeck: null,
   database: null,
@@ -118,16 +122,20 @@ const state = {
 };
 
 for (const id of [2, 3]) state.settings.decks.push({ ...state.settings.decks[0] });
+for (const settings of state.settings.decks) Object.assign(settings, { trim: 0, filter: 0 });
 
 function setDeckCount(count) {
   state.deckCount = Number(count) === 4 ? 4 : 2;
+  document.querySelector('.workspace')?.classList.toggle('four-decks', state.deckCount === 4);
   if (state.deckCount === 2) {
-    for (const id of [2, 3]) pauseDeck(id);
+    for (const id of [2, 3]) { if (getDeckById(id).isPlaying) pauseDeck(id); getDeckById(id).pfl = false; }
+    updateHeadphoneMix();
     if (Number(midiTarget.value.slice(-1)) >= 2) midiTarget.value = 'play-0';
     if (state.selectedDeck >= 2) state.selectedDeck = null;
   }
   for (const id of [2, 3]) {
     document.getElementById(`deck${deckLetter(id)}`).hidden = state.deckCount === 2;
+    document.getElementById(`channel${deckLetter(id)}`).hidden = state.deckCount === 2;
   }
   for (const option of midiTarget.options) {
     const hidden = Number(option.value.slice(-1)) >= state.deckCount;
@@ -135,6 +143,11 @@ function setDeckCount(count) {
     option.hidden = hidden;
   }
   try { localStorage.setItem('iykDeckCount', String(state.deckCount)); } catch {}
+  for (const id of ['syncMaster', 'syncTarget']) {
+    const select = document.getElementById(id);
+    if (Number(select.value) >= state.deckCount) select.value = id === 'syncMaster' ? '0' : '1';
+    for (const option of select.options) option.disabled = Number(option.value) >= state.deckCount;
+  }
   renderPlaylist();
 }
 
@@ -198,7 +211,16 @@ function ensureContext() {
     state.masterAnalyser = state.audioContext.createAnalyser();
     state.masterAnalyser.fftSize = 256;
     state.masterFrequencyBuffer = new Uint8Array(state.masterAnalyser.fftSize);
-    state.masterGain.connect(state.masterAnalyser);
+    if (state.audioContext.createDynamicsCompressor) {
+      state.limiter = state.audioContext.createDynamicsCompressor();
+      state.limiter.threshold.value = -1;
+      state.limiter.knee.value = 0;
+      state.limiter.ratio.value = 20;
+      state.limiter.attack.value = 0.003;
+      state.limiter.release.value = 0.08;
+      state.masterGain.connect(state.limiter);
+      state.limiter.connect(state.masterAnalyser);
+    } else state.masterGain.connect(state.masterAnalyser);
     state.masterAnalyser.connect(state.audioContext.destination);
   }
   if (state.audioContext.state === 'suspended') {
@@ -255,7 +277,15 @@ function buildDeckGraph(deck) {
   deck.source.connect(low);
   low.connect(mid);
   mid.connect(high);
-  high.connect(gainNode);
+  const trimNode = state.audioContext.createGain();
+  const toneFilter = state.audioContext.createBiquadFilter();
+  toneFilter.type = 'lowpass'; toneFilter.frequency.value = 20000;
+  const preAnalyser = state.audioContext.createAnalyser();
+  preAnalyser.fftSize = 256;
+  high.connect(trimNode); trimNode.connect(toneFilter); toneFilter.connect(preAnalyser);
+  preAnalyser.connect(gainNode);
+  deck.trimNode = trimNode; deck.toneFilter = toneFilter; deck.preAnalyser = preAnalyser;
+  deck.peakSamples = new Float32Array(preAnalyser.fftSize);
   gainNode.connect(dryGain);
   dryGain.connect(analyser);
   gainNode.connect(filter);
@@ -293,7 +323,7 @@ function createAudioElementForDeck(deck) {
   audio.addEventListener('timeupdate', () => {
     deck.currentTime = audio.currentTime || 0;
     if (deck.loopEnd !== null && audio.currentTime >= deck.loopEnd) {
-      audio.currentTime = deck.loopStart;
+      audio.currentTime = deck.loopStart + (audio.currentTime - deck.loopEnd) % (deck.loopEnd - deck.loopStart);
     }
     const seek = document.querySelector(`input[data-role="seek"][data-deck="${deck.id}"]`);
     if (seek && deck.duration) seek.value = String(Math.round((audio.currentTime / deck.duration) * 1000));
@@ -326,50 +356,65 @@ function updateDeckView(deck) {
   }
 
   if (durationEl) {
-    durationEl.textContent = formatTime(deck.duration);
+    durationEl.textContent = `−${formatTime(deck.duration - deck.currentTime)}`;
   }
 
   if (bpmEl) {
-    bpmEl.textContent = `${Math.round(deck.bpm)} BPM`;
+    bpmEl.textContent = deck.bpmKnown ? `${deck.bpmEstimated ? '≈ ' : ''}${deck.bpm.toFixed(1)} BPM` : '— BPM';
   }
 
   drawVisualizer(deck);
 }
 
 function drawVisualizer(deck) {
-  const canvas = document.getElementById(`visual${deckLetter(deck.id)}`);
-  if (!canvas) return;
-
-  const ctx = canvas.getContext('2d');
-  const width = Math.max(1, canvas.clientWidth * window.devicePixelRatio);
-  const height = Math.max(1, canvas.clientHeight * window.devicePixelRatio);
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
+  if (deck.audio) {
+    if (deck.loopEnd !== null && deck.loopEnd > deck.loopStart && deck.audio.currentTime >= deck.loopEnd) {
+      deck.audio.currentTime = deck.loopStart + (deck.audio.currentTime - deck.loopEnd) % (deck.loopEnd - deck.loopStart);
+    }
+    deck.currentTime = deck.audio.currentTime || 0;
   }
-
-  const buffer = deck.frequencyBuffer;
-  if (buffer) deck.analyser.getByteFrequencyData(buffer);
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#11131a';
-  ctx.fillRect(0, 0, width, height);
-  const bars = 96;
-  const gap = 2 * window.devicePixelRatio;
-  const barWidth = width / bars;
-  const progress = deck.duration ? deck.currentTime / deck.duration : 0;
-
-  for (let index = 0; index < bars; index += 1) {
-    const sample = buffer ? buffer[Math.min(buffer.length - 1, Math.floor(index / bars * buffer.length))] / 255 : 0;
-    const level = buffer ? sample : 0;
-    const barHeight = Math.max(3 * window.devicePixelRatio, level * height * 0.82);
-    const x = index * barWidth;
-    ctx.fillStyle = x / width < progress ? '#b977ff' : deck.id === 0 ? '#6e57dd' : '#19bfd0';
-    ctx.fillRect(x + gap / 2, (height - barHeight) / 2, Math.max(1, barWidth - gap), barHeight);
+  for (const detail of [false, true]) {
+    const canvas = document.getElementById(`${detail ? 'detail' : 'visual'}${deckLetter(deck.id)}`);
+    if (!canvas || !canvas.getContext) continue;
+    const ctx = canvas.getContext('2d');
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+    const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    ctx.fillStyle = '#0e1018'; ctx.fillRect(0, 0, width, height);
+    const duration = deck.duration || 1;
+    const span = detail ? 12 * (deck.audio?.playbackRate || 1) : duration;
+    const start = detail ? deck.currentTime - span * 0.3 : 0;
+    const toX = time => (time - start) / span * width;
+    const peaks = deck.waveform;
+    if (peaks?.length) {
+      ctx.fillStyle = ['#a27aee', '#5aabed', '#55d7ac', '#f0b75d'][deck.id];
+      for (let x = 0; x < width; x += Math.max(1, ratio)) {
+        const time = start + x / width * span;
+        if (time < 0 || time >= duration) continue;
+        const bin = Math.min(peaks.length - 1, Math.floor(time / duration * peaks.length));
+        const amplitude = peaks[bin] * height * 0.45;
+        ctx.fillRect(x, height / 2 - amplitude, Math.max(1, ratio), Math.max(1, amplitude * 2));
+      }
+    } else {
+      ctx.fillStyle = '#9d91ad'; ctx.font = `${11 * ratio}px sans-serif`;
+      ctx.fillText(deck.libraryId ? 'ANALYSE to prepare waveform / BPM' : 'Load a track', 12 * ratio, height * .55);
+    }
+    if (detail && deck.bpmKnown) {
+      const beat = 60 / deck.baseBpm, anchor = deck.gridOffset || 0;
+      for (let index = Math.ceil((start - anchor) / beat); anchor + index * beat < start + span; index++) {
+        const time = anchor + index * beat;
+        if (time < 0) continue;
+        ctx.fillStyle = index % 4 === 0 ? '#f4e7ff99' : '#f4e7ff30';
+        ctx.fillRect(toX(time), 0, ratio, height);
+      }
+    }
+    for (const time of [deck.cuePoint, ...(deck.hotCues || [])]) {
+      if (time === null || !Number.isFinite(time)) continue;
+      ctx.fillStyle = '#f6cd70'; ctx.fillRect(toX(time), 0, 2 * ratio, height * .25);
+    }
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(toX(deck.currentTime), 0, 2 * ratio, height);
   }
-
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(progress * width, 0, Math.max(1, window.devicePixelRatio), height);
 }
 
 function setStatus(message) {
@@ -377,7 +422,9 @@ function setStatus(message) {
 }
 
 function updateMasterMeter() {
-  if (!state.masterAnalyser) return;
+  if (!state.masterAnalyser || state.audioContext?.state !== 'running') {
+    document.querySelectorAll('.meter-track i').forEach(segment => { segment.classList.remove('active', 'clipping'); }); return;
+  }
   const samples = state.masterFrequencyBuffer;
   state.masterAnalyser.getByteTimeDomainData(samples);
   const rms = Math.sqrt(samples.reduce((total, value) => total + ((value - 128) / 128) ** 2, 0) / samples.length);
@@ -389,27 +436,50 @@ function updateMasterMeter() {
 }
 
 function runAutoMix() {
-  const startedAt = performance.now();
+  const startedAt = performance.now(), runId = state.autoMixRunId;
   const startValue = state.crossfader;
   const incomingDeck = state.autoMixIncoming;
   const outgoingDeck = getDeckById(1 - incomingDeck);
   const endValue = incomingDeck === 1 ? 100 : 0;
-  const duration = state.settings.autoMixDuration * 1000;
-  const update = (now) => {
-    if (!state.autoMix) return;
-    const progress = Math.min(1, (now - startedAt) / duration);
-    crossfaderInput.value = String(startValue + (endValue - startValue) * progress);
-    applyCrossfader();
-    if (progress < 1) {
-      state.autoMixFrame = requestAnimationFrame(update);
-    } else {
-      state.autoMix = false;
-      pauseDeck(outgoingDeck.id);
-      toggleAutoMixBtn.textContent = 'AUTO MIX A/B';
-      setStatus('Auto mix complete');
+  const duration = (state.transitionSeconds || state.settings.autoMixDuration) * 1000;
+  const audioStart = state.audioContext?.currentTime;
+  const scheduled = Number.isFinite(audioStart) && deckState.slice(0,2).every(deck => typeof deck.gainNode?.gain.setValueCurveAtTime === 'function');
+  if (scheduled) {
+    for (const deck of deckState.slice(0,2)) {
+      const volume = Number(document.querySelector(`input[data-role="volume"][data-deck="${deck.id}"]`).value) / 100 * .8;
+      const values = new Float32Array(128);
+      for (let n=0;n<values.length;n++) {
+        const position = (startValue + (endValue-startValue)*n/(values.length-1))/100;
+        values[n] = volume * (state.settings.crossfaderCurve === 'linear' ? deck.id===0 ? 1-position : position : deck.id===0 ? Math.cos(position*Math.PI/2) : Math.sin(position*Math.PI/2));
+      }
+      deck.gainNode.gain.cancelScheduledValues(audioStart);
+      deck.gainNode.gain.setValueCurveAtTime(values,audioStart,duration/1000);
     }
+  }
+  let finished = false;
+  const finish = () => {
+    if (finished || !state.autoMix || state.autoMixRunId !== runId) return;
+    finished = true; clearTimeout(state.fadeTimer);
+    crossfaderInput.value = String(endValue); state.crossfader = endValue;
+    for (const deck of deckState.slice(0,2)) deck.gainNode?.gain.cancelScheduledValues?.(state.audioContext.currentTime);
+    applyCrossfader(); state.autoMix = false; pauseDeck(outgoingDeck.id);
+    if (state.queueEnabled) {
+      state.queueActive = incomingDeck; state.queueUpcoming = null;
+      toggleAutoMixBtn.textContent = 'STOP AUTOMIX'; renderQueue();
+    } else toggleAutoMixBtn.textContent = 'AUTOMIX';
+    setStatus('Transition complete');
   };
-  state.autoMixFrame = requestAnimationFrame(update);
+  const update = now => {
+    if (!state.autoMix || state.autoMixRunId !== runId) return;
+    const progress = Math.min(1, (now-startedAt)/duration);
+    crossfaderInput.value = String(startValue+(endValue-startValue)*progress);
+    state.crossfader = Number(crossfaderInput.value);
+    if (!scheduled) applyCrossfader();
+    if (progress<1) state.autoMixFrame=requestAnimationFrame(update); else finish();
+  };
+  state.fadeTimer=setTimeout(finish,duration+25);
+  state.fadeTimer?.unref?.();
+  state.autoMixFrame=requestAnimationFrame(update);
 }
 
 async function startDeckPlayback(deck) {
@@ -427,7 +497,7 @@ async function startDeckPlayback(deck) {
   }
 }
 
-async function startAutoMix() {
+async function mixLoadedDecks() {
   const mixDecks = deckState.slice(0, 2);
   const loadedDecks = mixDecks.filter((deck) => deck.objectUrl);
   if (loadedDecks.length !== 2) {
@@ -438,7 +508,7 @@ async function startAutoMix() {
   toggleAutoMixBtn.disabled = true;
   state.autoMixStarting = true;
   const runId = ++state.autoMixRunId;
-  let outgoingDeck = mixDecks.find((deck) => deck.isPlaying);
+  let outgoingDeck = state.queueEnabled ? getDeckById(state.queueActive) : mixDecks.find((deck) => deck.isPlaying);
   if (!outgoingDeck) outgoingDeck = getDeckById(state.crossfader > 50 ? 1 : 0);
   const incomingDeck = getDeckById(1 - outgoingDeck.id);
 
@@ -448,12 +518,12 @@ async function startAutoMix() {
   applyCrossfader();
   if (!incomingDeck.isPlaying) incomingDeck.audio.currentTime = incomingDeck.cuePoint || 0;
   try {
-    const startPromises = mixDecks
+    const startPromises = [incomingDeck]
       .filter((deck) => !deck.isPlaying)
       .map((deck) => startDeckPlayback(deck));
     const startedDecks = await Promise.all(startPromises);
-    if (runId !== state.autoMixRunId) return;
-    if (startedDecks.some((started) => !started)) return;
+    if (runId !== state.autoMixRunId) { if (!incomingDeck.audio.paused) pauseDeck(incomingDeck.id); return; }
+    if (startedDecks.some((started) => !started)) { cancelAutoMix(); return; }
 
     state.autoMixIncoming = incomingDeck.id;
     state.autoMix = true;
@@ -467,12 +537,27 @@ async function startAutoMix() {
 }
 
 function cancelAutoMix() {
+  if (state.queueEnabled && state.queueUpcoming !== null && !state.autoMix && !state.autoMixStarting) {
+    const id = getDeckById(state.queueUpcoming).libraryId;
+    if (id) state.queue.unshift(id);
+  }
+  clearTimeout(state.fadeTimer);
+  if (state.audioContext) for (const deck of deckState.slice(0,2)) {
+    deck.gainNode?.gain.cancelScheduledValues?.(state.audioContext.currentTime);
+  }
+  state.queueEnabled = false;
+  state.queueEpoch += 1;
+  state.queueUpcoming = null;
+  state.queueBusy = false;
   state.autoMixRunId += 1;
   state.autoMix = false;
   state.autoMixStarting = false;
   cancelAnimationFrame(state.autoMixFrame);
   toggleAutoMixBtn.disabled = false;
-  toggleAutoMixBtn.textContent = 'AUTO MIX A/B';
+  toggleAutoMixBtn.textContent = 'AUTOMIX';
+  applyCrossfader();
+  try { localStorage.setItem('iykQueue', JSON.stringify(state.queue)); } catch {}
+  renderQueue();
   setStatus('Auto mix cancelled');
 }
 
@@ -482,7 +567,8 @@ function startRecording() {
     return;
   }
   const destination = state.audioContext.createMediaStreamDestination();
-  state.masterGain.connect(destination);
+  const recordingSource = state.masterAnalyser || state.masterGain;
+  recordingSource.connect(destination);
   const mimeType = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus']
     .find((type) => MediaRecorder.isTypeSupported(type));
   const chunks = [];
@@ -490,7 +576,7 @@ function startRecording() {
   try {
     recorder = new MediaRecorder(destination.stream, mimeType ? { mimeType } : undefined);
   } catch (error) {
-    state.masterGain.disconnect(destination);
+    recordingSource.disconnect(destination);
     destination.stream.getTracks().forEach((track) => track.stop());
     setStatus(`Could not start recording: ${error.message}`);
     return;
@@ -508,7 +594,7 @@ function startRecording() {
     download.download = `IYK-DeckLab-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
     download.click();
     setTimeout(() => URL.revokeObjectURL(download.href), 1000);
-    state.masterGain.disconnect(destination);
+    recordingSource.disconnect(destination);
     destination.stream.getTracks().forEach((track) => track.stop());
     state.recordingStopping = false;
     recordBtn.disabled = false;
@@ -552,7 +638,15 @@ function onMidiMessage(event) {
   if (event.data.length !== 3 || ![0x80, 0x90, 0xb0].includes(type) ||
       number > 127 || value > 127) return;
   const released = type === 0x80 || (type === 0x90 && value === 0);
-  if (released) return;
+  if (released) {
+    if (!state.midiLearning) {
+      const status = type === 0x80 ? (event.data[0] & 0x0f) | 0x90 : event.data[0];
+      const releaseKey = midiMappingKey({currentTarget:event.currentTarget, target:event.target, data:[status,number,0]});
+      const mapping = state.midiMappings[releaseKey];
+      if (mapping?.action?.startsWith('cue-')) cueRelease(Number(mapping.action.split('-')[1]));
+    }
+    return;
+  }
   const key = midiMappingKey(event);
   if (state.midiLearning) {
     const separator = midiTarget.value.lastIndexOf('-');
@@ -578,6 +672,7 @@ function onMidiMessage(event) {
 
   const target = state.midiMappings[key];
   if (!target) return;
+  if (type === 0xb0 && value === 0 && target.action?.startsWith('cue-')) { cueRelease(Number(target.action.split('-')[1])); return; }
   if (target.role && type === 0xb0) {
     const control = target.role === 'crossfader'
       ? crossfaderInput
@@ -602,8 +697,12 @@ function onMidiMessage(event) {
     });
   } else if (target.action && value > 0) {
     const [action, deck] = target.action.split('-');
-    if (action === 'play') togglePlay(Number(deck));
-    if (action === 'cue') cueDeck(Number(deck));
+    if (action === 'play') {
+      const target = getDeckById(Number(deck));
+      if (target.cueHeld) target.cueLatched = true;
+      else { if (state.queueEnabled && Number(deck) < 2) cancelAutoMix(); togglePlay(Number(deck)); }
+    }
+    if (action === 'cue') cuePress(Number(deck));
   }
 }
 
@@ -640,18 +739,23 @@ async function loadTrackForDeck(deckId, file, options = {}) {
     setStatus('Pause the deck before replacing its track');
     return;
   }
-  if (state.autoMix || state.autoMixStarting) cancelAutoMix();
+  if (!options.forQueue && (state.queueEnabled || state.autoMix || state.autoMixStarting)) cancelAutoMix();
   deck.currentTime = 0;
   deck.duration = 0;
 
   deck.fileName = options.name || file.name.replace(/\.[^/.]+$/, '');
   deck.bpm = Number(options.bpm || deck.baseBpm || 120);
   deck.baseBpm = deck.bpm;
+  deck.bpmKnown = Boolean(options.bpmKnown);
+  deck.bpmEstimated = Boolean(options.bpmEstimated);
+  deck.waveform = options.waveform || null;
+  deck.hotCues = Array.from({length:8}, (_, index) => Number.isFinite(options.hotCues?.[index]) ? options.hotCues[index] : null);
+  deck.gridOffset = options.gridOffset || 0;
   deck.cuePoint = Number(options.cuePoint || 0);
   deck.libraryId = options.id || crypto.randomUUID();
   deck.loopStart = Number.isFinite(options.loopStart) ? options.loopStart : null;
   deck.loopEnd = Number.isFinite(options.loopEnd) ? options.loopEnd : null;
-  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = deck.loopEnd === null ? 'OFF' : '4 BEATS';
+  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = deck.loopEnd === null ? 'OFF' : 'ON';
 
   if (deck.audio) URL.revokeObjectURL(deck.objectUrl || '');
   deck.objectUrl = URL.createObjectURL(file);
@@ -668,7 +772,8 @@ async function loadTrackForDeck(deckId, file, options = {}) {
     type: file.type,
     size: file.size,
     addedAt: options.addedAt || Date.now(),
-    bpm: deck.baseBpm,
+    bpm: deck.baseBpm, bpmKnown: deck.bpmKnown, bpmEstimated: deck.bpmEstimated,
+    hotCues: deck.hotCues, waveform: deck.waveform, gridOffset: deck.gridOffset, duration: options.duration || 0,
     cuePoint: deck.cuePoint,
     loopStart: deck.loopStart,
     loopEnd: deck.loopEnd,
@@ -691,6 +796,9 @@ async function loadTrackForDeck(deckId, file, options = {}) {
 
   renderPlaylist();
   updateDeckView(deck);
+  renderHotCues(deck);
+  const bpmInput = document.querySelector(`[data-role="bpm"][data-deck="${deckId}"]`);
+  if (bpmInput) bpmInput.value = deck.bpmKnown ? String(deck.baseBpm) : '';
   setStatus(`Loaded ${deck.fileName} on deck ${deckLetter(deckId)}`);
 }
 
@@ -699,8 +807,8 @@ function renderPlaylist() {
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
   const sortBy = document.getElementById('sortSelect').value;
   const tracks = state.library
-    .filter((item) => item.name.toLowerCase().includes(query))
-    .sort((a, b) => sortBy === 'name' ? a.name.localeCompare(b.name) : b.addedAt - a.addedAt);
+    .filter((item) => item.name.toLowerCase().includes(query) && (!state.favouritesOnly || item.favourite) && (!state.activeCrate || item.crates?.includes(state.activeCrate)))
+    .sort((a, b) => sortBy === 'name' ? a.name.localeCompare(b.name) : sortBy === 'bpm' ? (a.bpmKnown ? a.bpm : 0) - (b.bpmKnown ? b.bpm : 0) : sortBy === 'duration' ? (a.duration || 0) - (b.duration || 0) : b.addedAt - a.addedAt);
 
   tracks.forEach((item) => {
     const li = document.createElement('li');
@@ -711,7 +819,7 @@ function renderPlaylist() {
     name.textContent = item.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${item.bpm || 120} BPM`;
+    meta.textContent = `${item.bpmKnown ? (item.bpmEstimated ? '≈' : '') + Number(item.bpm).toFixed(1) : '—'} BPM · ${formatTime(item.duration || 0)}`;
     const deckActions = document.createElement('div');
     deckActions.className = 'deck-load-actions';
     Array.from({ length: state.deckCount }, (_, id) => id).forEach((deckId) => {
@@ -722,7 +830,29 @@ function renderPlaylist() {
       loadButton.addEventListener('click', () => loadTrackForDeck(deckId, item.file, { ...item, fromLibrary: true }));
       deckActions.appendChild(loadButton);
     });
-    deckActions.prepend(meta);
+    const favourite = document.createElement('button');
+    favourite.type = 'button'; favourite.textContent = item.favourite ? '★' : '☆';
+    favourite.setAttribute('aria-label', `Favourite ${item.name}`);
+    favourite.addEventListener('click', async () => { item.favourite = !item.favourite; await persistTrack(item); renderPlaylist(); });
+    const prepare = document.createElement('button');
+    prepare.type = 'button'; prepare.textContent = item.preparing ? '…' : 'ANALYSE'; prepare.disabled = Boolean(item.preparing);
+    prepare.addEventListener('click', () => prepareTrack(item));
+    const queue = document.createElement('button');
+    queue.type = 'button'; queue.textContent = '+ QUEUE'; queue.addEventListener('click', () => enqueueTrack(item.id));
+    const crateButton = document.createElement('button'); crateButton.type = 'button'; crateButton.textContent = '+ CRATE';
+    crateButton.addEventListener('click', async () => {
+      const id = document.getElementById('crateDestination').value;
+      if (!state.crates.some(crate => crate.id === id)) { setStatus('Create or choose a destination crate first'); return; }
+      item.crates = [...new Set([...(item.crates || []), id])]; await persistTrack(item); renderCrates(); renderPlaylist();
+    });
+    if (state.activeCrate) {
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '− CRATE';
+      remove.addEventListener('click', async () => { item.crates = (item.crates || []).filter(id => id !== state.activeCrate); await persistTrack(item); renderCrates(); renderPlaylist(); });
+      deckActions.append(remove);
+    }
+    deckActions.prepend(meta, favourite, prepare, queue, crateButton);
+    li.draggable = true;
+    li.addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', item.id));
     li.append(name, deckActions);
 
     name.addEventListener('click', () => {
@@ -767,18 +897,35 @@ function pauseDeck(deckId) {
 
 function cueDeck(deckId) {
   const deck = getDeckById(deckId);
-  if (!deck.audio) return;
-  if (deck.isPlaying) {
-    deck.cuePoint = deck.audio.currentTime;
-    deck.audio.pause();
-    deck.isPlaying = false;
-    document.querySelector(`[data-action="play"][data-deck="${deckId}"]`).textContent = '▶';
-    saveCue(deck);
-  } else {
-    deck.audio.currentTime = deck.cuePoint || 0;
+  if (!deck.audio || !deck.objectUrl) return;
+  pauseDeck(deckId);
+  if (deck.loopEnd !== null && (deck.cuePoint < deck.loopStart || deck.cuePoint >= deck.loopEnd)) {
+    deck.loopStart = null; deck.loopEnd = null; saveLoop(deck);
+    document.getElementById(`loopState${deckLetter(deckId)}`).textContent = 'OFF';
   }
+  deck.audio.currentTime = deck.cuePoint || 0;
+  deck.currentTime = deck.audio.currentTime;
   updateDeckView(deck);
-  setStatus(deck.cuePoint ? `Cue saved at ${formatTime(deck.cuePoint)}` : `Returned to cue on ${deck.fileName}`);
+  setStatus(`Returned to cue on ${deck.fileName}`);
+}
+
+async function cuePress(deckId) {
+  const deck = getDeckById(deckId);
+  if (!deck.objectUrl || deckId >= state.deckCount) return;
+  if (state.queueEnabled && deckId < 2) cancelAutoMix();
+  if (deck.isPlaying) { deck.cueHeld = false; cueDeck(deckId); return; }
+  deck.audio.currentTime = deck.cuePoint || 0;
+  deck.cueHeld = true; deck.cueLatched = false;
+  const started = await startDeckPlayback(deck);
+  if (started && !deck.cueHeld && !deck.cueLatched) cueDeck(deckId);
+}
+
+function cueRelease(deckId) {
+  const deck = getDeckById(deckId);
+  const held = deck.cueHeld;
+  deck.cueHeld = false;
+  if (held && !deck.cueLatched) cueDeck(deckId);
+  deck.cueLatched = false;
 }
 
 async function saveCue(deck) {
@@ -841,7 +988,7 @@ function restoreSettings() {
       saved.decks.forEach((deck, index) => {
         if (!deck || !state.settings.decks[index]) return;
         const ranges = {
-          volume: [0, 100],
+          volume: [0, 100], trim: [-12, 12], filter: [-100, 100],
           low: [-12, 12],
           mid: [-12, 12],
           high: [-12, 12],
@@ -890,12 +1037,16 @@ function toggleLoop(deckId) {
     setStatus(`Loop disabled on deck ${deckLetter(deckId)}`);
     return;
   }
+  if (!deck.bpmKnown) { setStatus('Analyse or enter the track BPM before using beat loops'); return; }
   const beatDuration = 60 / Math.max(1, deck.baseBpm);
-  deck.loopStart = deck.audio.currentTime;
-  deck.loopEnd = Math.min(deck.duration, deck.loopStart + beatDuration * 4);
+  const beats = Number(document.querySelector(`[data-role="loop-length"][data-deck="${deckId}"]`)?.value || 4);
+  const position = deck.audio.currentTime;
+  deck.loopStart = deck.bpmKnown ? Math.max(0, (deck.gridOffset || 0) + Math.floor((position - (deck.gridOffset || 0)) / beatDuration) * beatDuration) : position;
+  deck.loopEnd = Math.min(deck.duration, deck.loopStart + beatDuration * beats);
+  if (deck.loopEnd <= deck.loopStart) { deck.loopStart = null; deck.loopEnd = null; return; }
   saveLoop(deck);
-  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = '4 BEATS';
-  setStatus(`4 beat loop set on deck ${deckLetter(deckId)}`);
+  document.getElementById(`loopState${deckLetter(deckId)}`).textContent = `${beats} BEATS`;
+  setStatus(`${beats} beat loop set on deck ${deckLetter(deckId)}`);
 }
 
 async function saveLoop(deck) {
@@ -911,7 +1062,7 @@ async function saveLoop(deck) {
 }
 
 function stopAllDecks() {
-  if (state.autoMix || state.autoMixStarting) cancelAutoMix();
+  if (state.queueEnabled || state.autoMix || state.autoMixStarting) cancelAutoMix();
   deckState.forEach((deck) => {
     if (deck.audio) {
       deck.audio.pause();
@@ -927,22 +1078,29 @@ function stopAllDecks() {
 }
 
 function syncBpm() {
-  const deckA = getDeckById(0);
-  const deckB = getDeckById(1);
-
-  if (!deckA.objectUrl || !deckB.objectUrl) {
-    setStatus('Load tracks to sync BPM');
-    return;
+  const masterId = Number(document.getElementById('syncMaster').value || 0);
+  const targetId = Number(document.getElementById('syncTarget').value || 1);
+  const master = getDeckById(masterId), target = getDeckById(targetId);
+  if (masterId === targetId || masterId >= state.deckCount || targetId >= state.deckCount) {
+    setStatus('Choose different visible master and target decks'); return;
   }
-
-  const tempoControl = document.querySelector('input[data-role="tempo"][data-deck="1"]');
-  const requestedPitch = (deckA.bpm / deckB.baseBpm - 1) * 100;
+  if (!master.objectUrl || !target.objectUrl || !master.bpmKnown || !target.bpmKnown) {
+    setStatus('Analyse both tracks or enter their BPM before syncing'); return;
+  }
+  const tempoControl = document.querySelector(`input[data-role="tempo"][data-deck="${targetId}"]`);
+  const requestedPitch = (master.bpm / target.baseBpm - 1) * 100;
   tempoControl.value = String(Math.max(-10, Math.min(10, requestedPitch)));
-  updateDeckAudioFromControls(1);
-  saveSettings();
+  updateDeckAudioFromControls(targetId); saveSettings();
+  if (Math.abs(requestedPitch) <= 10 && master.isPlaying && target.isPlaying) {
+    const masterBeat = ((master.audio.currentTime - (master.gridOffset || 0)) * master.baseBpm / 60 % 1 + 1) % 1;
+    const targetBeat = ((target.audio.currentTime - (target.gridOffset || 0)) * target.baseBpm / 60 % 1 + 1) % 1;
+    let delta = masterBeat - targetBeat;
+    if (delta > .5) delta -= 1; if (delta < -.5) delta += 1;
+    target.audio.currentTime = Math.max(0, Math.min(target.duration || Infinity, target.audio.currentTime + delta * 60 / target.baseBpm));
+  }
   setStatus(Math.abs(requestedPitch) > 10
-    ? `Sync limited to ±10%: deck B is ${deckB.bpm.toFixed(1)} BPM`
-    : `Deck B matched to ${deckB.bpm.toFixed(1)} BPM`);
+    ? `Sync limited to ±10%: deck ${deckLetter(targetId)} is ${target.bpm.toFixed(1)} BPM`
+    : `Deck ${deckLetter(targetId)} synced to ${deckLetter(masterId)}. Check estimated grids by ear.`);
 }
 
 function applyCrossfader() {
@@ -984,6 +1142,14 @@ function updateDeckAudioFromControls(deckId) {
   deck.low.gain.value = low;
   deck.mid.gain.value = mid;
   deck.high.gain.value = high;
+  const trim = Number(document.querySelector(`[data-role="trim"][data-deck="${deckId}"]`)?.value || 0);
+  const filter = Number(document.querySelector(`[data-role="filter"][data-deck="${deckId}"]`)?.value || 0);
+  if (deck.trimNode) deck.trimNode.gain.value = 10 ** (trim / 20);
+  if (deck.toneFilter) {
+    deck.toneFilter.type = filter > 0 ? 'highpass' : 'lowpass';
+    deck.toneFilter.frequency.value = filter > 0 ? 20 * (1000 ** (filter / 100)) : 20000 * (0.001 ** (-filter / 100));
+  }
+  Object.assign(state.settings.decks[deckId], { trim, filter });
   deck.bpm = tempo;
   document.getElementById(`tempoValue${deckLetter(deckId)}`).textContent = `${pitch > 0 ? '+' : ''}${pitch.toFixed(1)}%`;
   Object.assign(state.settings.decks[deckId], { volume: Number(volumeSlider?.value ?? 80), low, mid, high, tempo: pitch });
@@ -1009,16 +1175,18 @@ function bindDeckInputs() {
       }
 
       if (action === 'play') {
+        const deck = getDeckById(deckId);
+        if (deck.cueHeld) { deck.cueLatched = true; return; }
+        if (state.queueEnabled && deckId < 2) cancelAutoMix();
         togglePlay(deckId);
       }
 
       if (action === 'pause') {
+        if (state.queueEnabled && deckId < 2) cancelAutoMix();
         pauseDeck(deckId);
       }
 
-      if (action === 'cue') {
-        cueDeck(deckId);
-      }
+      // CUE uses pointer/key press-and-release handlers below.
       if (action === 'loop') toggleLoop(deckId);
     });
   });
@@ -1028,7 +1196,8 @@ function bindDeckInputs() {
       const role = input.dataset.role;
       const deckId = Number(input.dataset.deck);
 
-      if (role === 'volume' || role === 'low' || role === 'mid' || role === 'high' || role === 'tempo') {
+      if (role === 'volume' && deckId < 2 && (state.autoMix || state.autoMixStarting)) cancelAutoMix();
+      if (role === 'volume' || role === 'low' || role === 'mid' || role === 'high' || role === 'tempo' || role === 'trim' || role === 'filter') {
         updateDeckAudioFromControls(deckId);
         saveSettings();
       }
@@ -1045,7 +1214,7 @@ function bindDeckInputs() {
   });
 
   crossfaderInput.addEventListener('input', () => {
-    if (state.autoMix || state.autoMixStarting) cancelAutoMix();
+    if (state.queueEnabled || state.autoMix || state.autoMixStarting) cancelAutoMix();
     applyCrossfader();
   });
   crossfaderInput.addEventListener('input', saveSettings);
@@ -1091,7 +1260,7 @@ function bindDeckInputs() {
   window.addEventListener('resize', () => deckState.forEach(drawVisualizer));
 
   toggleAutoMixBtn.addEventListener('click', () => {
-    if (state.autoMix) {
+    if (state.queueEnabled || state.autoMix) {
       cancelAutoMix();
       return;
     }
@@ -1105,7 +1274,7 @@ function bindDeckInputs() {
     for (const file of files) {
       const item = {
         id: crypto.randomUUID(), name: file.name.replace(/\.[^/.]+$/, ''),
-        type: file.type, size: file.size, addedAt: Date.now(), bpm: 120,
+        type: file.type, size: file.size, addedAt: Date.now(), bpm: 120, bpmKnown: false,
         cuePoint: 0, loopStart: null, loopEnd: null, file,
       };
       state.library.push(item);
@@ -1136,6 +1305,7 @@ async function init() {
   });
 
   bindDeckInputs();
+  bindClassicControls();
   const deckCountControl = document.getElementById('deckCount');
   try { deckCountControl.value = localStorage.getItem('iykDeckCount') === '4' ? '4' : '2'; } catch {}
   setDeckCount(deckCountControl.value);
@@ -1143,6 +1313,8 @@ async function init() {
   try {
     state.database = await openLibraryDatabase();
     state.library = await readLibrary();
+    restoreCrates();
+    restoreQueue();
     renderPlaylist();
   } catch (error) {
     setStatus('Local library storage is unavailable in this browser');
@@ -1158,7 +1330,8 @@ async function init() {
   const animationLoop = () => {
     deckState.forEach((deck) => {
       if (deck.analyser) {
-        drawVisualizer(deck);
+        updateDeckView(deck);
+        updateChannelMeter(deck);
       }
     });
     updateMasterMeter();
@@ -1166,7 +1339,399 @@ async function init() {
   };
 
   requestAnimationFrame(animationLoop);
+  setInterval(() => queueTick().catch(error => { cancelAutoMix(); setStatus(error.message); }), 200);
 }
 
 window.addEventListener('load', init);
 
+
+// Preparation runs serially; expensive PCM analysis runs in a worker.
+function analysePcm(samples, sampleRate) {
+  const bins = 4000;
+  const peaks = new Array(bins).fill(0);
+  const frameSize = Math.max(1, Math.round(sampleRate / 100));
+  const frames = Math.ceil(samples.length / frameSize);
+  const energy = new Float32Array(frames);
+  let peak = 0;
+  for (let index = 0; index < samples.length; index++) {
+    const value = Math.abs(samples[index]);
+    const bin = Math.min(bins - 1, Math.floor(index / samples.length * bins));
+    if (value > peaks[bin]) peaks[bin] = value;
+    energy[Math.floor(index / frameSize)] += value * value;
+    peak = Math.max(peak, value);
+  }
+  const onset = new Float32Array(frames);
+  let strongest = 0, anchorFrame = 0;
+  for (let index = 1; index < frames; index++) {
+    onset[index] = Math.max(0, Math.sqrt(energy[index]) - Math.sqrt(energy[index - 1]));
+    if (index < 1000 && onset[index] > strongest) { strongest = onset[index]; anchorFrame = index; }
+  }
+  // Restrict candidate tempo to 60–180; half/double-time ambiguity is exposed as an estimate.
+  let best = 0, bestLag = 0;
+  const rate = sampleRate / frameSize;
+  for (let lag = Math.round(rate * 60 / 180); lag <= Math.round(rate); lag++) {
+    let score = 0;
+    const limit = Math.min(frames, 18000);
+    for (let index = lag; index < limit; index++) score += onset[index] * onset[index - lag];
+    score /= Math.max(1, limit - lag);
+    if (score > best) { best = score; bestLag = lag; }
+  }
+  return {
+    waveform: peaks, duration: samples.length / sampleRate,
+    bpm: bestLag && best > 0.00001 ? Math.round(60 * rate / bestLag * 10) / 10 : null,
+    gridOffset: anchorFrame / rate, peak,
+  };
+}
+
+async function analyseInWorker(samples, sampleRate) {
+  if (typeof Worker === 'undefined') throw Error('Track preparation requires Web Worker support');
+  const code = `${analysePcm.toString()}; onmessage = ({data}) => { try { postMessage({result:analysePcm(data.samples,data.sampleRate)}); } catch(error) { postMessage({error:error.message}); } };`;
+  const url = URL.createObjectURL(new Blob([code], {type:'text/javascript'}));
+  const worker = new Worker(url);
+  try {
+    return await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(Error('Track analysis timed out')), 90000);
+      worker.onmessage = ({data}) => { clearTimeout(timeout); data.error ? reject(Error(data.error)) : resolve(data.result); };
+      worker.onerror = () => { clearTimeout(timeout); reject(Error('Track analysis failed')); };
+      worker.postMessage({samples, sampleRate}, [samples.buffer]);
+    });
+  } finally { worker.terminate(); URL.revokeObjectURL(url); }
+}
+
+async function persistTrack(track) {
+  try { await saveTrackToLibrary(track); }
+  catch { setStatus('Changes available for this session; local storage could not save them'); }
+}
+
+function prepareTrack(item) {
+  if (!item || item.preparing) return state.prepareChain;
+  item.preparing = true;
+  renderPlaylist();
+  const task = async () => {
+    try {
+      if (deckState.some(deck => deck.isPlaying)) throw Error('Pause playback before analysis; prepare tracks before your set');
+      if (item.file.size > 100 * 1024 * 1024) throw Error('File too large for browser preparation (100 MB limit); set BPM manually');
+      ensureContext();
+      setStatus(`Analysing ${item.name}`);
+      const decoded = await state.audioContext.decodeAudioData(await item.file.arrayBuffer());
+      if (decoded.duration > 1800) throw Error('Prepare tracks shorter than 30 minutes; set BPM manually for longer recordings');
+      // Average channels at 8kHz to bound worker-transfer size.
+      const step = Math.max(1, Math.floor(decoded.sampleRate / 8000));
+      const mono = new Float32Array(Math.ceil(decoded.length / step));
+      for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
+        const data = decoded.getChannelData(channel);
+        for (let n = 0; n < mono.length; n++) mono[n] += data[n * step] / decoded.numberOfChannels;
+      }
+      const result = await analyseInWorker(mono, decoded.sampleRate / step);
+      item.waveform = result.waveform; item.duration = decoded.duration;
+      if (!item.bpmManual && result.bpm) {
+        item.bpm = result.bpm; item.bpmKnown = true; item.bpmEstimated = true; item.gridOffset = result.gridOffset;
+      }
+      delete item.preparing;
+      await persistTrack(item);
+      for (const deck of deckState.filter(deck => deck.libraryId === item.id)) {
+        deck.waveform = item.waveform;
+        if (!deck.isPlaying) {
+          deck.baseBpm = item.bpm || 120; deck.bpmKnown = Boolean(item.bpmKnown);
+          deck.bpmEstimated = Boolean(item.bpmEstimated); deck.gridOffset = item.gridOffset || 0;
+          updateDeckAudioFromControls(deck.id);
+          document.querySelector(`[data-role="bpm"][data-deck="${deck.id}"]`).value = item.bpmKnown ? String(item.bpm) : '';
+        }
+      }
+      setStatus(result.bpm ? 'Waveform ready. BPM is an estimate: check the grid and correct if needed.' : 'Waveform ready; no reliable BPM found. Set BPM manually.');
+    } catch (error) { setStatus(error.message); }
+    finally { delete item.preparing; renderPlaylist(); }
+  };
+  state.prepareChain = state.prepareChain.then(task, task);
+  return state.prepareChain;
+}
+
+function renderHotCues(deck) {
+  document.querySelectorAll(`[data-action="hotcue"][data-deck="${deck.id}"]`).forEach(button => {
+    const time = deck.hotCues?.[Number(button.dataset.pad)];
+    button.classList.toggle('is-set', Number.isFinite(time));
+    button.title = Number.isFinite(time) ? `${formatTime(time)} · Shift+click to clear` : 'Set hot cue';
+  });
+}
+
+async function triggerHotCue(deckId, index, clear = false) {
+  const deck = getDeckById(deckId);
+  if (!deck.objectUrl || deckId >= state.deckCount) return;
+  if (state.queueEnabled && deckId < 2) cancelAutoMix();
+  deck.hotCues ||= new Array(8).fill(null);
+  if (clear) deck.hotCues[index] = null;
+  else if (Number.isFinite(deck.hotCues[index])) {
+    if (deck.loopEnd !== null && (deck.hotCues[index] < deck.loopStart || deck.hotCues[index] >= deck.loopEnd)) {
+      deck.loopStart = null; deck.loopEnd = null; saveLoop(deck);
+      document.getElementById(`loopState${deckLetter(deckId)}`).textContent = 'OFF';
+    }
+    deck.audio.currentTime = deck.hotCues[index];
+    if (!deck.isPlaying) await startDeckPlayback(deck);
+  } else deck.hotCues[index] = deck.audio.currentTime;
+  renderHotCues(deck);
+  const item = state.library.find(track => track.id === deck.libraryId);
+  if (item) { item.hotCues = [...deck.hotCues]; await persistTrack(item); }
+  renderHotCues(deck);
+}
+
+function updateChannelMeter(deck) {
+  if (!deck.preAnalyser?.getFloatTimeDomainData) return;
+  deck.preAnalyser.getFloatTimeDomainData(deck.peakSamples);
+  let peak = 0;
+  for (const sample of deck.peakSamples) peak = Math.max(peak, Math.abs(sample));
+  const meter = document.getElementById(`channelMeter${deckLetter(deck.id)}`);
+  meter.value = Math.min(1, peak); meter.title = peak >= .99 ? 'Input clipping: reduce gain' : `${(20 * Math.log10(Math.max(.00001, peak))).toFixed(1)} dBFS`;
+  const jog = document.querySelector(`.jog[data-deck="${deck.id}"]`);
+  if (jog) { jog.setAttribute('aria-valuemax', String(deck.duration || 0)); jog.setAttribute('aria-valuenow', String(deck.currentTime || 0)); }
+}
+
+function persistQueue() {
+  try { localStorage.setItem('iykQueue', JSON.stringify(state.queue)); } catch {}
+  renderQueue();
+}
+function restoreQueue() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('iykQueue') || '[]');
+    state.queue = Array.isArray(saved) ? saved.filter(id => state.library.some(track => track.id === id)) : [];
+  } catch { state.queue = []; }
+  renderQueue();
+}
+function enqueueTrack(id) { state.queue.push(id); persistQueue(); }
+function renderQueue() {
+  const list = document.getElementById('queueList');
+  list.innerHTML = '';
+  state.queue.forEach((id, index) => {
+    const track = state.library.find(item => item.id === id);
+    const li = document.createElement('li'); li.textContent = track?.name || 'Missing track';
+    const remove = document.createElement('button'); remove.textContent = '×'; remove.setAttribute('aria-label', `Remove ${track?.name || 'track'} from queue`);
+    remove.addEventListener('click', () => { state.queue.splice(index, 1); persistQueue(); });
+    li.append(remove); list.append(li);
+  });
+  document.getElementById('queueCount').textContent = String(state.queue.length);
+  document.getElementById('queueStatus').textContent = state.queueEnabled
+    ? `Playing deck ${deckLetter(state.queueActive)}${state.queueUpcoming !== null ? ' · next track ready' : ' · waiting for next track'}`
+    : 'Add tracks using + QUEUE, then Start. A/B only.';
+}
+
+function waitForTrack(deck) {
+  if (deck.audio.readyState >= 1 && Number.isFinite(deck.audio.duration)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearTimeout(timeout); deck.audio.removeEventListener('loadedmetadata', ready); deck.audio.removeEventListener('error', failed);
+      error ? reject(error) : resolve();
+    };
+    const ready = () => finish(); const failed = () => finish(Error(`Cannot decode ${deck.fileName}`));
+    const timeout = setTimeout(() => finish(Error(`Timed out loading ${deck.fileName}`)), 15000);
+    deck.audio.addEventListener('loadedmetadata', ready); deck.audio.addEventListener('error', failed);
+  });
+}
+
+async function startAutoMix() {
+  if (state.queueEnabled) { cancelAutoMix(); renderQueue(); return; }
+  const epoch = ++state.queueEpoch;
+  let active = deckState.slice(0, 2).find(deck => deck.isPlaying && (deck.id === 0 ? state.crossfader <= 50 : state.crossfader >= 50));
+  if (!active) active = getDeckById(0);
+  state.queueActive = active.id; state.queueEnabled = true; state.queueBusy = true;
+  try {
+    if (!active.objectUrl) {
+      const id = state.queue[0]; const item = state.library.find(track => track.id === id);
+      if (!item) throw Error('Add tracks to the Automix queue first');
+      await loadTrackForDeck(active.id, item.file, {...item, fromLibrary:true, forQueue:true});
+      await waitForTrack(active);
+      if (epoch !== state.queueEpoch) return;
+      state.queue.shift(); persistQueue();
+    }
+    if (epoch !== state.queueEpoch) return;
+    pauseDeck(1 - active.id);
+    crossfaderInput.value = active.id === 0 ? '0' : '100'; applyCrossfader();
+    if (!active.isPlaying && !await startDeckPlayback(active)) throw Error('Could not start Automix playback');
+    if (epoch !== state.queueEpoch) { pauseDeck(active.id); return; }
+    toggleAutoMixBtn.textContent = 'STOP AUTOMIX';
+    setStatus('Automix on: the next song starts near the current track’s end');
+    renderQueue();
+  } catch (error) { cancelAutoMix(); setStatus(error.message); }
+  finally { if (epoch === state.queueEpoch) state.queueBusy = false; }
+}
+
+async function queueTick(force = false) {
+  if (!state.queueEnabled || state.queueBusy || state.autoMix || state.autoMixStarting) return;
+  const epoch = state.queueEpoch;
+  const active = getDeckById(state.queueActive);
+  if (state.queueUpcoming === null && state.queue.length) {
+    const id = state.queue[0]; const item = state.library.find(track => track.id === id);
+    if (!item) { state.queue.shift(); persistQueue(); return; }
+    const incoming = getDeckById(1 - active.id);
+    state.queueBusy = true;
+    try {
+      pauseDeck(incoming.id);
+      await loadTrackForDeck(incoming.id, item.file, {...item, fromLibrary:true, forQueue:true});
+      await waitForTrack(incoming);
+      if (epoch !== state.queueEpoch) return;
+      incoming.audio.currentTime = incoming.cuePoint || 0;
+      state.queueUpcoming = incoming.id; state.queue.shift(); persistQueue();
+    } catch (error) {
+      if (epoch === state.queueEpoch) { state.queue.shift(); persistQueue(); setStatus(`${error.message}; skipped queued track`); }
+    } finally { if (epoch === state.queueEpoch) state.queueBusy = false; }
+  }
+  if (epoch !== state.queueEpoch || !state.queueEnabled) return;
+  const remaining = Math.max(0, (active.audio.duration - active.audio.currentTime) / (active.audio.playbackRate || 1));
+  if (state.queueUpcoming === null) {
+    if (active.audio.ended) { cancelAutoMix(); renderQueue(); setStatus('Automix queue finished'); }
+    return;
+  }
+  if (!Number.isFinite(remaining)) return;
+  if (!force && (active.loopEnd !== null || remaining > state.settings.autoMixDuration)) return;
+  state.transitionSeconds = Math.min(state.settings.autoMixDuration, Math.max(.1, remaining));
+  await mixLoadedDecks();
+}
+
+async function refreshHeadphoneOutputs() {
+  const select = document.getElementById('headphoneOutput');
+  const status = document.getElementById('outputStatus');
+  if (!navigator.mediaDevices?.enumerateDevices || typeof Audio.prototype.setSinkId !== 'function') {
+    status.textContent = 'Separate headphone device selection is unavailable in this runtime.'; return;
+  }
+  try {
+    if (navigator.mediaDevices.selectAudioOutput) await navigator.mediaDevices.selectAudioOutput();
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audiooutput' && !['default', 'communications', ''].includes(device.deviceId));
+    select.innerHTML = '<option value="">Disabled</option>';
+    devices.forEach((device, index) => {
+      const option = document.createElement('option'); option.value = device.deviceId; option.textContent = device.label || `Output ${index + 1}`; select.append(option);
+    });
+    status.textContent = devices.length ? 'Choose a physically separate headphone output; master uses the system default. Multi-channel ASIO routing is not available.' : 'No selectable outputs exposed. Check OS/browser audio permissions and reconnect your audio device.';
+  } catch (error) { status.textContent = `Output discovery: ${error.message}`; }
+}
+
+async function selectHeadphoneOutput(id) {
+  ensureContext();
+  const previous = state.headphoneAudio;
+  if (previous) { previous.pause(); previous.srcObject = null; }
+  state.headphoneReady = false;
+  if (!id) { document.getElementById('headphoneStatus').textContent = 'Headphones disabled'; return; }
+  try {
+    if (!state.headphoneBus) {
+      const ctx = state.audioContext;
+      state.headphoneBus = ctx.createGain(); state.headphoneBus.gain.value = .7;
+      state.headphoneDestination = ctx.createMediaStreamDestination(); state.headphoneBus.connect(state.headphoneDestination);
+      state.headphoneMaster = ctx.createGain(); state.headphoneMaster.gain.value = 0;
+      state.masterAnalyser.connect(state.headphoneMaster); state.headphoneMaster.connect(state.headphoneBus);
+      for (const deck of deckState) {
+        deck.cueGain = ctx.createGain(); deck.cueGain.gain.value = 0;
+        deck.preAnalyser.connect(deck.cueGain); deck.cueGain.connect(state.headphoneBus);
+      }
+    }
+    const audio = new Audio(); state.headphoneAudio = audio;
+    await audio.setSinkId(id);
+    audio.srcObject = state.headphoneDestination.stream;
+    await state.audioContext.resume(); await audio.play();
+    state.headphoneReady = true;
+    updateHeadphoneMix();
+    document.getElementById('headphoneStatus').textContent = 'Headphones ready · PFL selects cue channels';
+  } catch (error) { document.getElementById('headphoneStatus').textContent = `Headphone output failed: ${error.message}`; }
+}
+
+function updateHeadphoneMix() {
+  if (!state.headphoneBus) return;
+  const blend = Number(document.getElementById('headphoneBlend').value) / 100;
+  state.headphoneBus.gain.value = Number(document.getElementById('headphoneVolume').value) / 100;
+  state.headphoneMaster.gain.value = blend;
+  for (const deck of deckState) if (deck.cueGain) deck.cueGain.gain.value = state.headphoneReady && deck.pfl ? 1 - blend : 0;
+}
+
+function bindClassicControls() {
+  for (const button of document.querySelectorAll('[data-action="cue"]')) {
+    const id = Number(button.dataset.deck);
+    button.addEventListener('pointerdown', event => { if (event.button !== 0) return; button.setPointerCapture(event.pointerId); cuePress(id); });
+    button.addEventListener('pointerup', () => cueRelease(id));
+    button.addEventListener('pointercancel', () => cueRelease(id));
+    button.addEventListener('keydown', event => { if ([' ', 'Enter'].includes(event.key) && !event.repeat) { event.preventDefault(); cuePress(id); } });
+    button.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); cueRelease(id); } });
+  }
+  document.querySelectorAll('[data-action="hotcue"]').forEach(button => button.addEventListener('click', event => triggerHotCue(Number(button.dataset.deck), Number(button.dataset.pad), event.shiftKey)));
+  document.querySelectorAll('[data-action="prepare"]').forEach(button => button.addEventListener('click', () => prepareTrack(state.library.find(item => item.id === getDeckById(Number(button.dataset.deck)).libraryId))));
+  document.querySelectorAll('[data-action="set-cue"]').forEach(button => button.addEventListener('click', () => {
+    const deck = getDeckById(Number(button.dataset.deck)); if (!deck.objectUrl) return;
+    deck.cuePoint = deck.audio.currentTime; saveCue(deck); setStatus(`Cue set at ${formatTime(deck.cuePoint)}`);
+  }));
+  document.querySelectorAll('[data-role="bpm"]').forEach(input => input.addEventListener('change', async () => {
+    const bpm = Number(input.value); if (!Number.isFinite(bpm) || bpm < 40 || bpm > 240) return;
+    const deck = getDeckById(Number(input.dataset.deck));
+    deck.baseBpm = bpm; deck.bpmKnown = true; deck.bpmEstimated = false;
+    updateDeckAudioFromControls(deck.id);
+    const item = state.library.find(track => track.id === deck.libraryId);
+    if (item) { Object.assign(item, {bpm, bpmKnown:true, bpmEstimated:false, bpmManual:true}); await persistTrack(item); renderPlaylist(); }
+  }));
+  document.querySelectorAll('[data-action="grid"]').forEach(button => button.addEventListener('click', async () => {
+    const deck = getDeckById(Number(button.dataset.deck)); if (!deck.objectUrl) return;
+    deck.gridOffset = deck.audio.currentTime;
+    const item = state.library.find(track => track.id === deck.libraryId);
+    if (item) { item.gridOffset = deck.gridOffset; await persistTrack(item); }
+    setStatus('Beat anchor set. Check BPM and grid against the track.');
+  }));
+  document.querySelectorAll('[data-action="pfl"]').forEach(button => button.addEventListener('click', () => {
+    if (!state.headphoneReady) { setStatus('Configure a separate headphone output in Settings first'); return; }
+    const deck = getDeckById(Number(button.dataset.deck)); deck.pfl = !deck.pfl; button.setAttribute('aria-pressed', String(deck.pfl)); updateHeadphoneMix();
+  }));
+  document.querySelectorAll('.jog').forEach(jog => {
+    const deck = getDeckById(Number(jog.dataset.deck)); let last = null;
+    const seek = delta => { if (deck.objectUrl) { if (state.queueEnabled && deck.id < 2) cancelAutoMix(); deck.audio.currentTime = Math.max(0, Math.min(deck.duration || 0, deck.audio.currentTime + delta)); } };
+    jog.addEventListener('pointerdown', event => { last = event.clientX; jog.setPointerCapture(event.pointerId); });
+    jog.addEventListener('pointermove', event => { if (last !== null) { seek((event.clientX - last) * .015); last = event.clientX; } });
+    jog.addEventListener('pointerup', () => { last = null; }); jog.addEventListener('pointercancel', () => { last = null; });
+    jog.addEventListener('keydown', event => { if (['ArrowLeft','ArrowRight'].includes(event.key)) { event.preventDefault(); seek(event.key === 'ArrowLeft' ? -.1 : .1); } });
+  });
+  for (const action of ['nudge-up','nudge-down']) document.querySelectorAll(`[data-action="${action}"]`).forEach(button => {
+    const deck = getDeckById(Number(button.dataset.deck));
+    button.addEventListener('pointerdown', event => { button.setPointerCapture(event.pointerId); if (deck.objectUrl) deck.audio.playbackRate = (1 + state.settings.decks[deck.id].tempo / 100) * (action === 'nudge-up' ? 1.04 : .96); });
+    const release = () => { if (deck.audio) deck.audio.playbackRate = 1 + state.settings.decks[deck.id].tempo / 100; };
+    button.addEventListener('pointerup', release); button.addEventListener('pointercancel', release);
+  });
+  document.querySelectorAll('.deck').forEach((article, id) => {
+    article.addEventListener('pointerdown', () => { state.focusDeck = id; });
+    article.addEventListener('dragover', event => event.preventDefault());
+    article.addEventListener('drop', event => { event.preventDefault(); const item = state.library.find(track => track.id === event.dataTransfer.getData('text/plain')); if (item) loadTrackForDeck(id, item.file, {...item, fromLibrary:true}); });
+  });
+  window.addEventListener('keydown', event => {
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('input, select, textarea, button, [role="slider"]') || document.querySelector('dialog[open]')) return;
+    const id = state.focusDeck || 0;
+    if (event.code === 'Space') { event.preventDefault(); if (state.queueEnabled && id < 2) cancelAutoMix(); togglePlay(id); }
+    if (/^Digit[1-8]$/.test(event.code)) { event.preventDefault(); triggerHotCue(id, Number(event.code.slice(-1))-1, event.shiftKey); }
+  });
+  document.getElementById('startQueueBtn').addEventListener('click', () => startAutoMix());
+  document.getElementById('mixNowBtn').addEventListener('click', () => { if (!state.queueEnabled) { setStatus('Start Automix first'); return; } queueTick(true).catch(error => { cancelAutoMix(); setStatus(error.message); }); });
+  document.getElementById('clearQueueBtn').addEventListener('click', () => { cancelAutoMix(); state.queue = []; persistQueue(); });
+  for (const [id, favourites] of [['allTracksBtn', false], ['favouritesBtn', true]]) document.getElementById(id).addEventListener('click', () => { state.favouritesOnly = favourites; state.activeCrate = null; document.getElementById('allTracksBtn').classList.toggle('active', !favourites); document.getElementById('favouritesBtn').classList.toggle('active', favourites); renderPlaylist(); });
+  document.getElementById('createCrateBtn').addEventListener('click', createCrate);
+  document.getElementById('refreshOutputsBtn').addEventListener('click', refreshHeadphoneOutputs);
+  document.getElementById('headphoneOutput').addEventListener('change', event => selectHeadphoneOutput(event.target.value));
+  for (const id of ['headphoneBlend','headphoneVolume']) document.getElementById(id).addEventListener('input', updateHeadphoneMix);
+}
+
+function restoreCrates() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('iykCrates') || '[]');
+    state.crates = Array.isArray(saved) ? saved.filter(crate => typeof crate.id === 'string' && typeof crate.name === 'string') : [];
+  } catch { state.crates = []; }
+  renderCrates();
+}
+function renderCrates() {
+  const list = document.getElementById('crateList'), destination = document.getElementById('crateDestination');
+  const selected = destination.value;
+  list.innerHTML = ''; destination.innerHTML = '<option value="">Choose destination crate</option>';
+  state.crates.forEach(crate => {
+    const row = document.createElement('div');
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = `${crate.name} (${state.library.filter(item => item.crates?.includes(crate.id)).length})`;
+    button.addEventListener('click', () => { state.activeCrate = crate.id; state.favouritesOnly = false; renderPlaylist(); });
+    row.append(button); list.append(row);
+    const option = document.createElement('option'); option.value = crate.id; option.textContent = crate.name; destination.append(option);
+  });
+  if (state.crates.some(crate => crate.id === selected)) destination.value = selected;
+}
+function createCrate() {
+  const input = document.getElementById('crateName'); const name = input.value.trim().slice(0,60);
+  if (!name || state.crates.some(crate => crate.name.toLowerCase() === name.toLowerCase())) { setStatus('Enter a new crate name'); return; }
+  const crate = {id:crypto.randomUUID(), name}; state.crates.push(crate); input.value = '';
+  try { localStorage.setItem('iykCrates', JSON.stringify(state.crates)); } catch { setStatus('Crate created for this session only'); }
+  renderCrates(); document.getElementById('crateDestination').value = crate.id;
+}
