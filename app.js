@@ -652,6 +652,40 @@ function midiMappingKey(event) {
   return `${deviceId}:${event.data[0]}:${event.data[1]}`;
 }
 
+function flx2Mapping(status, number, bank = 0) {
+  const channel=status&15, type=status&240, deck=channel+bank;
+  if(channel<2 && type===144 && [11,12].includes(number)) return {action:`${number===11?'play':'cue'}-${deck}`};
+  if(channel<2 && type===176) {
+    const role={0:'tempo',7:'high',11:'mid',15:'low',19:'volume'}[number];
+    if(role) return {role,deck:String(deck)}; // MSB; matching LSB messages are ignored.
+  }
+  if(channel===6 && type===176) {
+    if(number===31) return {role:'crossfader',deck:null};
+    if(number===23 || number===24) return {role:'filter',deck:String(bank+number-23)};
+  }
+  return null;
+}
+function handleFlx2Extra(event, bank) {
+  const [status,number,value]=event.data, channel=status&15, type=status&240;
+  const deck=channel+bank;
+  if(channel<2 && type===176 && [33,34,35,41].includes(number)) {
+    const target=getDeckById(deck), delta=value-64;
+    if(target.audio && target.objectUrl && delta) target.audio.currentTime=Math.max(0,Math.min(target.duration||0,target.audio.currentTime+delta*.025));
+    return true;
+  }
+  if(type===144 && value>0 && channel<2 && number===84) {
+    document.querySelector(`[data-action="pfl"][data-deck="${deck}"]`)?.click(); return true;
+  }
+  if(type===144 && value>0 && [7,9].includes(channel) && number<8) {
+    void triggerHotCue(bank+(channel===9?1:0),number); return true;
+  }
+  if(type===144 && value>0 && channel<2 && number===88) {
+    document.getElementById('syncMaster').value=String(bank+(channel===0?1:0));
+    document.getElementById('syncTarget').value=String(deck);
+    document.getElementById('syncBpmBtn')?.click(); return true;
+  }
+  return false;
+}
 function onMidiMessage(event) {
   const [status, number, value] = event.data;
   const type = status & 0xf0;
@@ -662,7 +696,9 @@ function onMidiMessage(event) {
     if (!state.midiLearning) {
       const status = type === 0x80 ? (event.data[0] & 0x0f) | 0x90 : event.data[0];
       const releaseKey = midiMappingKey({currentTarget:event.currentTarget, target:event.target, data:[status,number,0]});
-      const mapping = state.midiMappings[releaseKey];
+      const device=event.currentTarget || event.target;
+      const bank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
+      const mapping = state.midiMappings[releaseKey] || (/DDJ.?FLX2/i.test(device?.name || '') ? flx2Mapping(status,number,bank) : null);
       if (mapping?.action?.startsWith('cue-')) cueRelease(Number(mapping.action.split('-')[1]));
     }
     return;
@@ -690,7 +726,11 @@ function onMidiMessage(event) {
     return;
   }
 
-  const target = state.midiMappings[key];
+  const input=event.currentTarget || event.target;
+  const flx=/DDJ.?FLX2/i.test(input?.name || '');
+  const bank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
+  if(flx && !state.midiMappings[key] && handleFlx2Extra(event,bank)) return;
+  const target = state.midiMappings[key] || (flx ? flx2Mapping(status,number,bank) : null);
   if (!target) return;
   if (type === 0xb0 && value === 0 && target.action?.startsWith('cue-')) { cueRelease(Number(target.action.split('-')[1])); return; }
   if (target.role && type === 0xb0) {
@@ -733,11 +773,13 @@ async function initializeMidi() {
     return;
   }
   try {
-    state.midiAccess = await navigator.requestMIDIAccess();
+    state.midiAccess = await navigator.requestMIDIAccess({sysex:false});
+    midiLearnBtn.disabled=false;
     const connectInputs = () => {
       state.midiPickup.clear();
       const inputs = [...state.midiAccess.inputs.values()].filter((input) => input.state === 'connected');
       for (const input of inputs) input.onmidimessage = onMidiMessage;
+      setStatus(inputs.length ? `Controller connected: ${inputs.map(input=>input.name).join(', ')}. DDJ-FLX2 preset automatic; other devices use MIDI Learn.` : 'No MIDI controller found. Connect USB, close other DJ apps and reconnect.');
       audioStatus.textContent = inputs.length
         ? `MIDI ${inputs.length} CONNECTED`
         : 'AUDIO ENGINE IDLE';
@@ -745,8 +787,8 @@ async function initializeMidi() {
     state.midiAccess.onstatechange = connectInputs;
     connectInputs();
   } catch (error) {
-    midiLearnBtn.disabled = true;
     midiLearnBtn.title = 'MIDI access was not granted';
+    setStatus(`Controller access failed: ${error.message}. Allow MIDI access in site permissions, then reconnect.`);
   }
 }
 
@@ -1260,6 +1302,12 @@ function bindDeckInputs() {
     midiLearnBtn.classList.toggle('is-learning', state.midiLearning);
     midiLearnBtn.textContent = state.midiLearning ? 'PRESS A CONTROL' : 'MIDI LEARN';
     setStatus(state.midiLearning ? 'Press a MIDI control to assign it' : 'MIDI learn cancelled');
+  });
+  document.getElementById('connectControllerBtn').addEventListener('click', initializeMidi);
+  document.getElementById('controllerBank').addEventListener('change', () => {
+    for (const deck of deckState) if (deck.cueHeld) cueRelease(deck.id);
+    state.midiPickup.clear();
+    setStatus('Controller deck pair changed. Move faders through the on-screen position to pick up control.');
   });
   document.getElementById('searchInput').addEventListener('input', renderPlaylist);
   document.getElementById('sortSelect').addEventListener('change', renderPlaylist);

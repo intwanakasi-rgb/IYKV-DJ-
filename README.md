@@ -107,3 +107,5 @@ Project code is MIT licensed. Build/runtime dependency notices must accompany di
 Effects per deck: low-pass, high-pass, band-pass, echo, beat-timed dub delay, reverb and drive, with an amount control and Off.
 
 Windows downloads now use the latest release installer directly. Successful main-branch Windows builds publish an explicitly labelled unsigned development release with SHA256 checksums. Signed releases still require the signing credentials and verification workflow.
+
+DDJ-FLX2: connect with USB, click **Connect controller**, and allow MIDI permission. Its factory MIDI preset applies automatically by device name; saved MIDI Learn mappings take priority. Under Controller Mapping choose A/B or C/D (four-deck mode). Supported: Play/Cue, EQ, tempo/faders (MSB resolution with soft takeover), filter, PFL, Sync, hot-cue pad mode 1 and relative jog seeking. This is not scratch emulation; LEDs, Smart Fader and hardware audio/headphone routing are not implemented by this preset. Preset tested with synthetic messages, not physical hardware. Source: https://assets.pioneerdjhub.com/DDJ-FLX2_MIDI_Message_List_E1.pdf

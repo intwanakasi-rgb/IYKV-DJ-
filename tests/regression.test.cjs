@@ -408,3 +408,22 @@ test('peak and RMS meters calculate each channel independently', () => {
   assert.ok(result.left.level>result.right.level*9);
   assert.ok(Math.abs(result.rms.level-Math.sqrt(.32))<.00001);
 });
+
+
+test('FLX2 factory mapping distinguishes decks, ignores 14-bit LSB and supports CD bank', () => {
+ const h=harness();
+ assert.equal(h.run('flx2Mapping(0x90,11).action'),'play-0');
+ assert.equal(h.run('flx2Mapping(0x91,12,2).action'),'cue-3');
+ assert.equal(h.run('flx2Mapping(0xb1,19).role'),'volume');
+ assert.equal(h.run('flx2Mapping(0xb6,24,2).deck'),'3');
+ assert.equal(h.run('flx2Mapping(0xb0,39)'),null);
+ assert.equal(h.run('flx2Mapping(0xb6,31).role'),'crossfader');
+});
+test('FLX2 factory transport handles cue release and does not affect other devices', () => {
+ const h=harness();
+ h.run('globalThis.presses=[];globalThis.releases=[];cuePress=id=>presses.push(id);cueRelease=id=>releases.push(id);');
+ h.run('onMidiMessage({currentTarget:{id:"flx",name:"DDJ-FLX2"},data:[0x91,12,127]});onMidiMessage({currentTarget:{id:"flx",name:"DDJ-FLX2"},data:[0x81,12,0]});');
+ assert.equal(h.run('presses.join()'),'1');assert.equal(h.run('releases.join()'),'1');
+ h.run('onMidiMessage({currentTarget:{id:"other",name:"Other"},data:[0x91,12,127]})');
+ assert.equal(h.run('presses.length'),1);
+});

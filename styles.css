@@ -376,3 +376,22 @@ body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:
  .four-decks .deck .jog { width:50px; height:50px; }
  .four-decks .deck .pads button { padding:5px; }
 }
+
+@media(min-width:1000px) {
+ .four-decks .decks { grid-template-columns:minmax(0,1fr) minmax(360px,.85fr) minmax(0,1fr); }
+ .four-decks .channel-strips { gap:6px; position:relative; padding-top:125px; }
+ .four-decks .channel-strips > .master-meter { position:absolute; top:0; left:50%; transform:translateX(-50%); padding:0; height:120px; }
+ .four-decks .channel-strips > .master-meter .master-stereo { height:95px; min-height:95px; }
+ .four-decks .channel-strip .mixer-control { display:flex; flex-direction:column; gap:3px; margin-bottom:8px; }
+ body[data-mixer-style=knobs] .four-decks .mixer-control .dial,body[data-mixer-style=knobs] .four-decks .mixer-control input { width:30px; height:30px; }
+ body[data-mixer-style=knobs] .four-decks .mixer-control input { width:30px; height:30px; }
+ .four-decks .channel-content { gap:3px; }
+ .four-decks .channel-strip h3 { font-size:12px; }
+ .four-decks .channel-strip .control-value { white-space:normal; }
+ .four-decks .channel-content > .stereo-meters { width:16px; gap:2px; }
+ .four-decks .channel-content > .stereo-meters .stereo-rail,.four-decks .channel-content > .stereo-meters .stereo-column { width:6px; }
+ .four-decks .central-mixer { align-self:start; }
+ .four-decks .deck { padding:8px; }
+ .four-decks .deck .performance-row { flex-wrap:wrap; }
+ .four-decks .fx-controls { display:flex; flex-wrap:wrap; }
+}
