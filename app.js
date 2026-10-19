@@ -686,7 +686,18 @@ function handleFlx2Extra(event, bank) {
   }
   return false;
 }
+function isFlx2Input(input) {
+  const selected=document.getElementById('controllerProfile')?.value;
+  const profile=['auto','flx2','learn'].includes(selected)?selected:'auto';
+  return profile==='flx2' || (profile==='auto' && /DDJ[\s_-]*FLX[\s_-]*2/i.test(input?.name || ''));
+}
+function controllerReport(message) {
+  const output=document.getElementById('controllerStatus');
+  if(output) output.textContent=message;
+}
 function onMidiMessage(event) {
+  const source=event.currentTarget || event.target;
+  controllerReport(`Receiving: ${source?.name || 'MIDI input'} · ${Array.from(event.data).map(v=>v.toString(16).padStart(2,'0')).join(' ')} · ${isFlx2Input(source)?'DDJ-FLX2 preset':'MIDI Learn mapping'}`);
   const [status, number, value] = event.data;
   const type = status & 0xf0;
   if (event.data.length !== 3 || ![0x80, 0x90, 0xb0].includes(type) ||
@@ -698,7 +709,7 @@ function onMidiMessage(event) {
       const releaseKey = midiMappingKey({currentTarget:event.currentTarget, target:event.target, data:[status,number,0]});
       const device=event.currentTarget || event.target;
       const bank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
-      const mapping = state.midiMappings[releaseKey] || (/DDJ.?FLX2/i.test(device?.name || '') ? flx2Mapping(status,number,bank) : null);
+      const mapping = (document.getElementById('controllerProfile')?.value==='flx2' ? null : state.midiMappings[releaseKey]) || (isFlx2Input(device) ? flx2Mapping(status,number,bank) : null);
       if (mapping?.action?.startsWith('cue-')) cueRelease(Number(mapping.action.split('-')[1]));
     }
     return;
@@ -727,10 +738,11 @@ function onMidiMessage(event) {
   }
 
   const input=event.currentTarget || event.target;
-  const flx=/DDJ.?FLX2/i.test(input?.name || '');
+  const flx=isFlx2Input(input);
   const bank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
-  if(flx && !state.midiMappings[key] && handleFlx2Extra(event,bank)) return;
-  const target = state.midiMappings[key] || (flx ? flx2Mapping(status,number,bank) : null);
+  const learned=document.getElementById('controllerProfile')?.value==='flx2' ? null : state.midiMappings[key];
+  if(flx && !learned && handleFlx2Extra(event,bank)) return;
+  const target = learned || (flx ? flx2Mapping(status,number,bank) : null);
   if (!target) return;
   if (type === 0xb0 && value === 0 && target.action?.startsWith('cue-')) { cueRelease(Number(target.action.split('-')[1])); return; }
   if (target.role && type === 0xb0) {
@@ -770,24 +782,31 @@ async function initializeMidi() {
   if (!navigator.requestMIDIAccess) {
     midiLearnBtn.disabled = true;
     midiLearnBtn.title = 'Web MIDI is unavailable in this browser';
+    controllerReport('Web MIDI is unavailable in this environment. Use the latest desktop app or Chrome/Edge on HTTPS.');
     return;
   }
   try {
     state.midiAccess = await navigator.requestMIDIAccess({sysex:false});
     midiLearnBtn.disabled=false;
-    const connectInputs = () => {
+    const connectInputs = async () => {
       state.midiPickup.clear();
       const inputs = [...state.midiAccess.inputs.values()].filter((input) => input.state === 'connected');
-      for (const input of inputs) input.onmidimessage = onMidiMessage;
+      const errors=[];
+      for (const input of inputs) {
+        input.onmidimessage=onMidiMessage;
+        try { if(input.open) await input.open(); } catch(error) { errors.push(`${input.name}: ${error.message}`); }
+      }
+      controllerReport(inputs.length ? `Detected: ${inputs.map(input=>input.name || '(unnamed MIDI port)').join(', ')}. Move a knob or press Play to check incoming messages.${errors.length?' Cannot open: '+errors.join('; '):''}` : 'No MIDI input ports found. Connect USB, close other DJ apps, then click Connect controller again.');
       setStatus(inputs.length ? `Controller connected: ${inputs.map(input=>input.name).join(', ')}. DDJ-FLX2 preset automatic; other devices use MIDI Learn.` : 'No MIDI controller found. Connect USB, close other DJ apps and reconnect.');
       audioStatus.textContent = inputs.length
         ? `MIDI ${inputs.length} CONNECTED`
         : 'AUDIO ENGINE IDLE';
     };
     state.midiAccess.onstatechange = connectInputs;
-    connectInputs();
+    await connectInputs();
   } catch (error) {
     midiLearnBtn.title = 'MIDI access was not granted';
+    controllerReport(`MIDI permission/open error: ${error.message}`);
     setStatus(`Controller access failed: ${error.message}. Allow MIDI access in site permissions, then reconnect.`);
   }
 }
@@ -1303,7 +1322,14 @@ function bindDeckInputs() {
     midiLearnBtn.textContent = state.midiLearning ? 'PRESS A CONTROL' : 'MIDI LEARN';
     setStatus(state.midiLearning ? 'Press a MIDI control to assign it' : 'MIDI learn cancelled');
   });
-  document.getElementById('connectControllerBtn').addEventListener('click', initializeMidi);
+  const profile=document.getElementById('controllerProfile');
+  try { profile.value=localStorage.getItem('iykControllerProfile') || 'auto'; } catch {}
+  profile.addEventListener('change',()=>{state.midiPickup.clear();try{localStorage.setItem('iykControllerProfile',profile.value);}catch{} controllerReport('Profile changed. Move a control to test incoming MIDI.');});
+  document.getElementById('connectControllerBtn').addEventListener('click', () => {
+    document.querySelector('.mapping-details').open=true;
+    document.getElementById('controllerStatus').scrollIntoView({block:'nearest'});
+    void initializeMidi();
+  });
   document.getElementById('controllerBank').addEventListener('change', () => {
     for (const deck of deckState) if (deck.cueHeld) cueRelease(deck.id);
     state.midiPickup.clear();
@@ -1991,7 +2017,7 @@ function bindAboutSettings() {
   const stats=window.DECKLAB_BUILD?.downloads;
   document.getElementById('aboutDownloadCount').textContent=Number.isSafeInteger(stats?.total)&&stats.total>=0 ? stats.total.toLocaleString() : 'Unavailable';
   document.getElementById('aboutDownloadsUpdated').textContent=stats?.updatedAt && Number.isFinite(Date.parse(stats.updatedAt)) ? new Date(stats.updatedAt).toLocaleDateString() : 'Not yet verified';
-  document.getElementById('aboutVersion').textContent = window.DECKLAB_BUILD?.version || 'Development build';
+  document.getElementById('aboutVersion').textContent = window.DECKLAB_BUILD ? `${window.DECKLAB_BUILD.version} · build ${window.DECKLAB_BUILD.build || 'local'}` : 'Development build';
   document.getElementById('aboutRuntime').textContent = navigator.userAgent.includes('Electron/') ? 'Desktop' : 'Web browser';
   for (const [id,tab] of [['mixerSettingsTab','mixer'],['aboutSettingsTab','about']]) {
     const button = document.getElementById(id);

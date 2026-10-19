@@ -427,3 +427,10 @@ test('FLX2 factory transport handles cue release and does not affect other devic
  h.run('onMidiMessage({currentTarget:{id:"other",name:"Other"},data:[0x91,12,127]})');
  assert.equal(h.run('presses.length'),1);
 });
+
+test('explicit FLX2 profile works with generic port names and overrides stale learned mappings', () => {
+ const h=harness();h.element('controllerProfile').value='flx2';
+ h.run('globalThis.plays=[];togglePlay=id=>plays.push(id);state.midiMappings["usb:144:11"]={action:"play-1"};onMidiMessage({currentTarget:{id:"usb",name:"USB MIDI"},data:[0x90,11,127]});');
+ assert.equal(h.run('plays.join()'),'0');
+ assert.match(h.element('controllerStatus').textContent,/Receiving: USB MIDI/);
+});
