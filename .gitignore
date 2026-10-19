@@ -4,3 +4,9 @@ release/
 *.log
 .DS_Store
 Thumbs.db
+
+
+# Never commit signing keys or exported certificates
+*.pfx
+*.p12
+*.key
