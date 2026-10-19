@@ -13,8 +13,8 @@
     "web:dev": "vite --host 0.0.0.0",
     "web:build": "vite build --base=./ --outDir dist/web",
     "desktop": "electron .",
-    "package:win": "electron-builder --win nsis --x64",
-    "package:linux": "electron-builder --linux AppImage --x64",
+    "package:win": "electron-builder --win nsis --x64 --publish never",
+    "package:linux": "electron-builder --linux AppImage --x64 --publish never",
     "test": "node --test tests/*.test.cjs",
     "check": "node --check app.js && node --check desktop/main.cjs"
   },
