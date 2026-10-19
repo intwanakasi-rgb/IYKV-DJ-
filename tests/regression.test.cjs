@@ -1,0 +1,236 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const appCode = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8');
+
+function harness(saved = {}) {
+  const elements = new Map();
+  const element = (key) => {
+    if (!elements.has(key)) elements.set(key, {
+      value: '0', textContent: '', min: '0', max: '100', type: 'range',
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener() {}, dispatchEvent() {}, selectedOptions: [{ text: 'Test target' }],
+    });
+    return elements.get(key);
+  };
+  const context = vm.createContext({
+    console, Map, Uint8Array, Event, setTimeout,
+    localStorage: { getItem: (key) => saved[key] ?? null, setItem: (key, value) => { saved[key] = value; } },
+    document: { getElementById: element, querySelector: element, querySelectorAll: () => [] },
+    window: { addEventListener() {} }, navigator: {},
+    requestAnimationFrame: () => 1, cancelAnimationFrame() {},
+    performance: { now: () => 0 },
+    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+    crypto: { randomUUID: () => 'new-track-id' },
+  });
+  vm.runInContext(appCode, context);
+  return { context, element, run: (code) => vm.runInContext(code, context) };
+}
+
+test('corrupt or invalid MIDI storage cannot stop startup', () => {
+  for (const value of ['broken JSON', 'null', '[]', '{"bad":{"role":"invalid"}}']) {
+    assert.equal(harness({ iykMidiMappings: value }).run('Object.keys(state.midiMappings).length'), 0);
+  }
+});
+
+test('MIDI channels produce distinct mappings', () => {
+  const h = harness();
+  assert.notEqual(h.run('midiMappingKey({data:[0x90,60,127]})'), h.run('midiMappingKey({data:[0x91,60,127]})'));
+});
+
+test('MIDI Learn ignores note releases and unsupported messages', () => {
+  const h = harness();
+  h.run('state.midiLearning = true');
+  h.run('onMidiMessage({data:[0x80,60,64]}); onMidiMessage({data:[0x90,60,0]}); onMidiMessage({data:[0xc0,4]})');
+  assert.equal(h.run('state.midiLearning'), true);
+  assert.equal(h.run('Object.keys(state.midiMappings).length'), 0);
+});
+
+test('MIDI transport accepts a CC button press but not release', () => {
+  const h = harness();
+  h.run('globalThis.plays = 0; togglePlay = () => plays++; state.midiMappings["device:176:7"] = {action:"play-0"}');
+  h.run('onMidiMessage({data:[0xb0,7,127]}); onMidiMessage({data:[0xb0,7,0]})');
+  assert.equal(h.run('plays'), 1);
+});
+
+test('MIDI soft takeover waits for crossing and re-arms after mouse changes', () => {
+  const h = harness();
+  const slider = h.element('crossfader');
+  slider.value = '50';
+  h.run('state.midiMappings["device:176:7"] = {role:"crossfader"}');
+  h.run('onMidiMessage({data:[0xb0,7,0]})');
+  assert.equal(slider.value, '50');
+  h.run('onMidiMessage({data:[0xb0,7,80]})');
+  assert.ok(Number(slider.value) > 60);
+  slider.value = '10';
+  h.run('onMidiMessage({data:[0xb0,7,90]})');
+  assert.equal(slider.value, '10');
+});
+
+test('first Auto Mix starts with a finite generation and pauses outgoing deck', async () => {
+  const h = harness();
+  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+    startDeckPlayback = async d => { d.isPlaying = true; return true; };
+    globalThis.frames = []; requestAnimationFrame = fn => { frames.push(fn); return frames.length; };
+    globalThis.pausedDeck = null; pauseDeck = id => { pausedDeck = id; };`);
+  await h.run('startAutoMix()');
+  assert.equal(h.run('state.autoMix'), true);
+  assert.equal(h.run('state.autoMixRunId'), 1);
+  h.run('frames[0](12000)');
+  assert.equal(h.run('state.autoMix'), false);
+  assert.equal(h.run('pausedDeck'), 0);
+});
+
+test('cancelled pending Auto Mix cannot start a fade afterwards', async () => {
+  const h = harness();
+  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+    globalThis.pending = [];
+    startDeckPlayback = () => new Promise(resolve => pending.push(resolve));`);
+  const start = h.run('startAutoMix()');
+  h.run('cancelAutoMix(); pending.forEach(resolve => resolve(true))');
+  await start;
+  assert.equal(h.run('state.autoMix'), false);
+});
+
+test('loading a new track gives cue persistence a library identity', async () => {
+  const h = harness();
+  h.run(`ensureContext = () => {}; buildDeckGraph = () => {};
+    updateDeckAudioFromControls = () => {}; applyDeckEffects = () => {};
+    renderPlaylist = () => {}; updateDeckView = () => {};
+    saveTrackToLibrary = async () => {};
+    deckState[0].audio = {load() {}};`);
+  await h.run('loadTrackForDeck(0, {name:"test.wav", size:1, type:"audio/wav"})');
+  assert.equal(h.run('deckState[0].libraryId'), h.run('state.library[0].id'));
+  h.run('deckState[0].cuePoint = 12');
+  await h.run('saveCue(deckState[0])');
+  assert.equal(h.run('state.library[0].cuePoint'), 12);
+});
+
+test('track loading protects a playing deck', async () => {
+  const h = harness();
+  h.run('ensureContext = () => {}; deckState[0].isPlaying = true; deckState[0].fileName = "live track"');
+  await h.run('loadTrackForDeck(0, {name:"replacement.wav"})');
+  assert.equal(h.run('deckState[0].fileName'), 'live track');
+});
+
+test('sync rate stays consistent with pitch slider and saved settings', () => {
+  const h = harness();
+  const slider = h.element('input[data-role="tempo"][data-deck="1"]');
+  slider.value = '0';
+  h.run(`deckState.forEach(d => d.objectUrl = 'blob:track');
+    deckState[0].bpm = 160; deckState[1].baseBpm = 100;
+    updateDeckAudioFromControls = () => {
+      const pitch = Number(document.querySelector('input[data-role="tempo"][data-deck="1"]').value);
+      state.settings.decks[1].tempo = pitch; deckState[1].bpm = 100 * (1 + pitch / 100);
+    }; syncBpm();`);
+  assert.equal(slider.value, '10');
+  assert.equal(h.run('state.settings.decks[1].tempo'), 10);
+  assert.ok(Math.abs(h.run('deckState[1].bpm') - 110) < 0.001);
+});
+
+test('echo wet path connects to deck output', () => {
+  const h = harness();
+  const nodes = [];
+  const makeNode = () => {
+    const node = { connections: [], connect(other) { this.connections.push(other); },
+      gain: { value: 0 }, frequency: { value: 0 }, delayTime: { value: 0 }, frequencyBinCount: 512 };
+    nodes.push(node); return node;
+  };
+  h.context.fakeContext = { createGain: makeNode, createBiquadFilter: makeNode,
+    createAnalyser: makeNode, createDelay: makeNode, createMediaElementSource: makeNode };
+  h.run('ensureContext = () => {}; state.audioContext = fakeContext; deckState[0].audio = {}; buildDeckGraph(deckState[0])');
+  assert.equal(h.run('deckState[0].effectNodes.delayGain.connections.includes(deckState[0].analyser)'), true);
+});
+
+test('desktop installs permission handlers only after Electron ready', async () => {
+  let ready = false, handler;
+  const code = fs.readFileSync(path.join(__dirname, '../desktop/main.cjs'), 'utf8');
+  const session = {};
+  Object.defineProperty(session, 'defaultSession', { get() {
+    assert.equal(ready, true, 'session used before app readiness');
+    return { setPermissionRequestHandler(fn) { handler = fn; }, setPermissionCheckHandler() {} };
+  } });
+  class Window {
+    constructor() { this.webContents = { setWindowOpenHandler() {}, on() {} }; }
+    loadFile() {}
+  }
+  vm.runInNewContext(code, { __dirname: path.join(__dirname, '../desktop'), process: {platform:'win32'},
+    require(name) {
+      if (name !== 'electron') return require(name);
+      return { session, BrowserWindow: Window, shell: {}, app: {
+        setName() {}, commandLine: { appendSwitch() {} }, on() {},
+        whenReady() { return Promise.resolve().then(() => { ready = true; }); },
+      } };
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  let allowed;
+  handler({ getURL: () => 'https://untrusted.example' }, 'midi', value => { allowed = value; });
+  assert.equal(allowed, false);
+});
+
+test('loop source boundaries use original BPM when pitch is adjusted', () => {
+  const h = harness();
+  h.run(`deckState[0].audio = {currentTime:10}; deckState[0].duration = 100;
+    deckState[0].baseBpm = 120; deckState[0].bpm = 132;
+    saveLoop = () => {}; toggleLoop(0);`);
+  assert.equal(h.run('deckState[0].loopEnd'), 12);
+});
+
+test('stored library BPM remains original after pitch adjustment', async () => {
+  const h = harness();
+  h.run(`ensureContext = () => {}; buildDeckGraph = () => {};
+    updateDeckAudioFromControls = () => { deckState[0].bpm = 132; };
+    applyDeckEffects = () => {}; renderPlaylist = () => {}; updateDeckView = () => {};
+    saveTrackToLibrary = async () => {}; deckState[0].audio = {load() {}};`);
+  await h.run('loadTrackForDeck(0, {name:"pitched.wav"}, {bpm:120})');
+  assert.equal(h.run('state.library[0].bpm'), 120);
+});
+
+test('batch importing files leaves playback intact and stores every file', async () => {
+  const h = harness();
+  const handlers = {};
+  h.element('fileInput').addEventListener = (name, fn) => { handlers[name] = fn; };
+  h.run(`bindDeckInputs(); globalThis.savedCount = 0;
+    saveTrackToLibrary = async () => { savedCount++; }; renderPlaylist = () => {};
+    deckState[0].isPlaying = true; deckState[0].fileName = 'Live set';`);
+  await handlers.change({target:{files:[{name:'one.wav'}, {name:'two.wav'}]}});
+  assert.equal(h.run('savedCount'), 2);
+  assert.equal(h.run('state.library.length'), 2);
+  assert.equal(h.run('deckState[0].isPlaying'), true);
+  assert.equal(h.run('deckState[0].fileName'), 'Live set');
+});
+
+test('recording finalisation blocks restart and frees chunks and stream', () => {
+  const h = harness();
+  h.context.Blob = Blob;
+  h.context.setInterval = () => 1;
+  h.context.clearInterval = () => {};
+  const handlers = {};
+  let stopped = false, disconnected = false, downloaded = false;
+  class Recorder {
+    static isTypeSupported() { return true; }
+    constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; }
+    addEventListener(name, fn) { handlers[name] = fn; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; }
+  }
+  h.context.MediaRecorder = Recorder;
+  h.context.window.MediaRecorder = Recorder;
+  h.context.destination = {stream:{getTracks:() => [{stop() { stopped = true; }}]}};
+  h.context.document.createElement = () => ({ click() { downloaded = true; } });
+  h.context.master = {connect() {}, disconnect() { disconnected = true; }};
+  h.element('recordBtn').querySelector = () => ({textContent:''});
+  h.run('state.audioContext = {createMediaStreamDestination: () => destination}; state.masterGain = master; startRecording()');
+  handlers.dataavailable({data:new Blob(['audio'])});
+  h.run('toggleRecording(); toggleRecording()');
+  assert.equal(h.run('state.recordingStopping'), true);
+  handlers.stop();
+  assert.equal(downloaded, true);
+  assert.equal(disconnected, true);
+  assert.equal(stopped, true);
+  assert.equal(h.run('state.recordingStopping'), false);
+  assert.equal(h.run('state.recordingChunks.length'), 0);
+});

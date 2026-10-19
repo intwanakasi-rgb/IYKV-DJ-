@@ -15,13 +15,13 @@ This repository is an early Web Audio prototype, not yet a professional low-late
 | Library | IndexedDB-backed imported audio files, search by filename, sort by added/name, select a deck using its load button | No folder scan, metadata editor, playlist/crate, or missing-file relocation |
 | Cue and loop | One persistent cue point and manually started 4-beat loop per imported track | No hot-cue bank, quantisation, editable beat-grid, or automatic loop alignment |
 | Recording | Captures the master mix through MediaRecorder and downloads WebM/Opus or Ogg where supported | Browser codec/container support varies; no crash recovery or tracklist sidecar |
-| Controller | Basic Web MIDI Learn for transport, channel level, EQ, effect amount and crossfader; mappings persist in local storage | Chromium/secure-context dependent; no MIDI output, soft takeover, conflict editor, mapping import/export, or physical hardware verification |
+| Controller | Basic Web MIDI Learn for transport, channel level, EQ, effect amount and crossfader; mappings persist in local storage | Chromium/secure-context dependent; channel-aware mappings and soft takeover; no MIDI output, conflict editor, mapping import/export, or physical hardware verification |
 | Metering | Live spectrum and master RMS meter from the audio graph | Not a calibrated peak/clipping meter |
 | Platforms | Web practice build and Electron desktop packaging configuration | Windows artifact is not built/tested in this Linux workspace; macOS, Linux and mobile are not supported releases |
 
 ## Run locally
 
-Requirements: Node.js 20 or newer and npm.
+Requirements: Node.js 22.12 or newer and npm (matching the locked toolchain).
 
 ```sh
 npm ci
@@ -66,3 +66,7 @@ Project code is MIT licensed. Electron, electron-builder, and Vite are build dep
 4. **Mobile and ecosystem:** touch applications, local-network companion, practice web build, optional IYK services.
 
 Nothing in phases 2–4 is represented as implemented. Android and iOS need native app/audio integrations and separate physical-device testing. Platform support, performance, latency, and controller compatibility must be reported only after testing on the actual target hardware.
+
+## Reliability checks
+
+Run `npm test`, `npm run check`, and `npm run web:build` before submitting changes. Tests cover Auto Mix, audio graph wiring, track identity and import safety, tempo consistency, MIDI mapping and pickup, and Electron readiness using controlled mocks. Hardware and audible output still require physical testing. See [the reliability review](docs/REVIEW.md) for fixes, limitations, and release gates. Re-learn existing controller mappings after upgrading: new mappings distinguish MIDI channels.

@@ -1,3 +1,29 @@
+function readMidiMappings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('iykMidiMappings') || '{}');
+    if (!saved || Array.isArray(saved) || typeof saved !== 'object') return {};
+    return Object.fromEntries(Object.entries(saved).filter(([, mapping]) => {
+      if (!mapping || typeof mapping !== 'object') return false;
+      if (mapping.action) return /^(play|cue)-[01]$/.test(mapping.action);
+      return mapping.role === 'crossfader' ||
+        (['volume', 'low', 'mid', 'high', 'tempo', 'effect-amount'].includes(mapping.role) &&
+          ['0', '1'].includes(String(mapping.deck)));
+    }));
+  } catch {
+    return {};
+  }
+}
+
+function saveMidiMappings() {
+  try {
+    localStorage.setItem('iykMidiMappings', JSON.stringify(state.midiMappings));
+    return true;
+  } catch {
+    setStatus('Controller mapping works for this session; browser storage could not save it');
+    return false;
+  }
+}
+
 const deckState = [
   {
     id: 0,
@@ -20,8 +46,6 @@ const deckState = [
     pausedAt: 0,
     startedAt: 0,
     autoMix: false,
-    autoMixStarting: false,
-    autoMixRunId: 0,
     cuePoint: 0,
     loopStart: null,
     loopEnd: null,
@@ -60,6 +84,9 @@ const state = {
   masterGain: null,
   crossfader: 50,
   autoMix: false,
+  autoMixStarting: false,
+  autoMixRunId: 0,
+  midiPickup: new Map(),
   library: [],
   selectedDeck: null,
   database: null,
@@ -67,11 +94,12 @@ const state = {
   recordingChunks: [],
   recordingStartedAt: 0,
   recordingTimer: null,
+  recordingStopping: false,
   autoMixFrame: null,
   midiAccess: null,
   masterAnalyser: null,
   masterFrequencyBuffer: null,
-  midiMappings: JSON.parse(localStorage.getItem('iykMidiMappings') || '{}'),
+  midiMappings: readMidiMappings(),
   midiLearning: false,
   settings: {
     masterVolume: 90,
@@ -209,6 +237,7 @@ function buildDeckGraph(deck) {
   filterGain.connect(analyser);
   gainNode.connect(delay);
   delay.connect(delayGain);
+  delayGain.connect(analyser);
   delay.connect(delayFeedback);
   delayFeedback.connect(delay);
   analyser.connect(state.masterGain);
@@ -231,8 +260,8 @@ function createAudioElementForDeck(deck) {
 
   audio.addEventListener('loadedmetadata', () => {
     deck.duration = audio.duration || 0;
-    deck.baseBpm = deck.bpm || 120;
-    updateDeckView(deck)
+    updateDeckAudioFromControls(deck.id);
+    updateDeckView(deck);
   });
 
   audio.addEventListener('timeupdate', () => {
@@ -424,13 +453,23 @@ function startRecording() {
   state.masterGain.connect(destination);
   const mimeType = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus']
     .find((type) => MediaRecorder.isTypeSupported(type));
-  state.recordingChunks = [];
-  state.recorder = new MediaRecorder(destination.stream, mimeType ? { mimeType } : undefined);
+  const chunks = [];
+  let recorder;
+  try {
+    recorder = new MediaRecorder(destination.stream, mimeType ? { mimeType } : undefined);
+  } catch (error) {
+    state.masterGain.disconnect(destination);
+    destination.stream.getTracks().forEach((track) => track.stop());
+    setStatus(`Could not start recording: ${error.message}`);
+    return;
+  }
+  state.recordingChunks = chunks;
+  state.recorder = recorder;
   state.recorder.addEventListener('dataavailable', (event) => {
-    if (event.data.size) state.recordingChunks.push(event.data);
+    if (event.data.size) chunks.push(event.data);
   });
   state.recorder.addEventListener('stop', () => {
-    const blob = new Blob(state.recordingChunks, { type: state.recorder.mimeType || 'audio/webm' });
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
     const extension = blob.type.includes('ogg') ? 'ogg' : 'webm';
     const download = document.createElement('a');
     download.href = URL.createObjectURL(blob);
@@ -438,7 +477,11 @@ function startRecording() {
     download.click();
     setTimeout(() => URL.revokeObjectURL(download.href), 1000);
     state.masterGain.disconnect(destination);
-    setStatus('Recording saved to Downloads');
+    destination.stream.getTracks().forEach((track) => track.stop());
+    state.recordingStopping = false;
+    recordBtn.disabled = false;
+    state.recordingChunks = [];
+    setStatus('Recording download requested');
   });
   state.recorder.start(1000);
   state.recordingStartedAt = Date.now();
@@ -451,7 +494,10 @@ function startRecording() {
 }
 
 function toggleRecording() {
+  if (state.recordingStopping) return;
   if (state.recorder?.state === 'recording') {
+    state.recordingStopping = true;
+    recordBtn.disabled = true;
     state.recorder.stop();
     clearInterval(state.recordingTimer);
     recordBtn.classList.remove('is-recording');
@@ -465,37 +511,64 @@ function toggleRecording() {
 
 function midiMappingKey(event) {
   const deviceId = event.currentTarget?.id || event.target?.id || 'device';
-  return `${deviceId}:${event.data[0] & 0xf0}:${event.data[1]}`;
+  return `${deviceId}:${event.data[0]}:${event.data[1]}`;
 }
 
 function onMidiMessage(event) {
-  if (event.data.length < 2) return;
+  const [status, number, value] = event.data;
+  const type = status & 0xf0;
+  if (event.data.length !== 3 || ![0x80, 0x90, 0xb0].includes(type) ||
+      number > 127 || value > 127) return;
+  const released = type === 0x80 || (type === 0x90 && value === 0);
+  if (released) return;
   const key = midiMappingKey(event);
   if (state.midiLearning) {
     const separator = midiTarget.value.lastIndexOf('-');
     const role = separator < 0 ? midiTarget.value : midiTarget.value.slice(0, separator);
     const deck = separator < 0 ? null : midiTarget.value.slice(separator + 1);
-    state.midiMappings[key] = role === 'play' || role === 'cue'
+    const isAction = role === 'play' || role === 'cue';
+    if (!isAction && type !== 0xb0) {
+      setStatus('Move a MIDI knob or fader to assign this continuous control');
+      return;
+    }
+    if (isAction && value === 0) return;
+    state.midiMappings[key] = isAction
       ? { action: midiTarget.value }
-      : { role, deck: deck ?? null };
-    localStorage.setItem('iykMidiMappings', JSON.stringify(state.midiMappings));
+      : { role, deck };
+    state.midiPickup.delete(key);
+    const saved = saveMidiMappings();
     state.midiLearning = false;
     midiLearnBtn.classList.remove('is-learning');
     midiLearnBtn.textContent = 'MIDI LEARN';
-    setStatus(`Assigned MIDI control to ${midiTarget.selectedOptions[0].text}`);
+    if (saved) setStatus(`Assigned MIDI control to ${midiTarget.selectedOptions[0].text}`);
     return;
   }
 
   const target = state.midiMappings[key];
   if (!target) return;
-  if (target.role) {
+  if (target.role && type === 0xb0) {
     const control = target.role === 'crossfader'
       ? crossfaderInput
       : document.querySelector(`[data-role="${target.role}"][data-deck="${target.deck}"]`);
     if (!control || control.type !== 'range') return;
-    control.value = String(Number(control.min) + (event.data[2] / 127) * (Number(control.max) - Number(control.min)));
+    const min = Number(control.min), max = Number(control.max);
+    const current = (Number(control.value) - min) / (max - min);
+    const position = value / 127;
+    const pickup = state.midiPickup.get(key);
+    // Re-arm if the mouse or another control changed the software value.
+    const acquired = pickup?.acquired && Math.abs(current - pickup.applied) < 0.015;
+    const crossed = pickup && (pickup.previous - current) * (position - current) <= 0;
+    if (!acquired && Math.abs(position - current) > 2 / 127 && !crossed) {
+      state.midiPickup.set(key, { previous: position, acquired: false });
+      return;
+    }
+    control.value = String(min + position * (max - min));
     control.dispatchEvent(new Event('input', { bubbles: true }));
-  } else if ((event.data[0] & 0xf0) === 0x90 && event.data[2] > 0) {
+    state.midiPickup.set(key, {
+      previous: position, acquired: true,
+      applied: (Number(control.value) - min) / (max - min),
+    });
+  } else if (target.action && value > 0) {
     const [action, deck] = target.action.split('-');
     if (action === 'play') togglePlay(Number(deck));
     if (action === 'cue') cueDeck(Number(deck));
@@ -511,9 +584,11 @@ async function initializeMidi() {
   try {
     state.midiAccess = await navigator.requestMIDIAccess();
     const connectInputs = () => {
-      for (const input of state.midiAccess.inputs.values()) input.onmidimessage = onMidiMessage;
-      audioStatus.textContent = state.midiAccess.inputs.size
-        ? `MIDI ${state.midiAccess.inputs.size} CONNECTED`
+      state.midiPickup.clear();
+      const inputs = [...state.midiAccess.inputs.values()].filter((input) => input.state === 'connected');
+      for (const input of inputs) input.onmidimessage = onMidiMessage;
+      audioStatus.textContent = inputs.length
+        ? `MIDI ${inputs.length} CONNECTED`
         : 'AUDIO ENGINE IDLE';
     };
     state.midiAccess.onstatechange = connectInputs;
@@ -529,12 +604,19 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   ensureContext();
 
   if (!file) return;
+  if (deck.isPlaying) {
+    setStatus('Pause the deck before replacing its track');
+    return;
+  }
+  if (state.autoMix || state.autoMixStarting) cancelAutoMix();
+  deck.currentTime = 0;
+  deck.duration = 0;
 
   deck.fileName = options.name || file.name.replace(/\.[^/.]+$/, '');
   deck.bpm = Number(options.bpm || deck.baseBpm || 120);
   deck.baseBpm = deck.bpm;
   deck.cuePoint = Number(options.cuePoint || 0);
-  deck.libraryId = options.id || null;
+  deck.libraryId = options.id || crypto.randomUUID();
   deck.loopStart = Number.isFinite(options.loopStart) ? options.loopStart : null;
   deck.loopEnd = Number.isFinite(options.loopEnd) ? options.loopEnd : null;
   document.getElementById(`loopState${deckId === 0 ? 'A' : 'B'}`).textContent = deck.loopEnd === null ? 'OFF' : '4 BEATS';
@@ -545,14 +627,16 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   deck.audio.load();
 
   buildDeckGraph(deck);
+  updateDeckAudioFromControls(deckId);
+  applyDeckEffects(deckId);
 
   const item = {
-    id: options.id || crypto.randomUUID(),
+    id: deck.libraryId,
     name: deck.fileName,
     type: file.type,
     size: file.size,
     addedAt: options.addedAt || Date.now(),
-    bpm: deck.bpm,
+    bpm: deck.baseBpm,
     cuePoint: deck.cuePoint,
     loopStart: deck.loopStart,
     loopEnd: deck.loopEnd,
@@ -560,7 +644,11 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   };
   if (!options.fromLibrary) {
     try {
-      await saveTrackToLibrary(item);
+      try {
+    await saveTrackToLibrary(item);
+  } catch {
+    setStatus('Track markers could not be saved; they remain available this session');
+  }
       setStatus(`Added ${deck.fileName} to library`);
     } catch (error) {
       setStatus(`Loaded ${deck.fileName}; local library storage is unavailable`);
@@ -664,7 +752,11 @@ async function saveCue(deck) {
   const item = state.library.find((track) => track.id === deck.libraryId);
   if (!item) return;
   item.cuePoint = deck.cuePoint;
-  await saveTrackToLibrary(item);
+  try {
+    await saveTrackToLibrary(item);
+  } catch {
+    setStatus('Track markers could not be saved; they remain available this session');
+  }
 }
 
 function applyDeckEffects(deckId) {
@@ -765,7 +857,7 @@ function toggleLoop(deckId) {
     setStatus(`Loop disabled on deck ${deckId === 0 ? 'A' : 'B'}`);
     return;
   }
-  const beatDuration = 60 / Math.max(1, deck.bpm);
+  const beatDuration = 60 / Math.max(1, deck.baseBpm);
   deck.loopStart = deck.audio.currentTime;
   deck.loopEnd = Math.min(deck.duration, deck.loopStart + beatDuration * 4);
   saveLoop(deck);
@@ -778,7 +870,11 @@ async function saveLoop(deck) {
   if (!item) return;
   item.loopStart = deck.loopStart;
   item.loopEnd = deck.loopEnd;
-  await saveTrackToLibrary(item);
+  try {
+    await saveTrackToLibrary(item);
+  } catch {
+    setStatus('Track markers could not be saved; they remain available this session');
+  }
 }
 
 function stopAllDecks() {
@@ -806,14 +902,14 @@ function syncBpm() {
     return;
   }
 
-  deckB.bpm = deckA.bpm;
-  deckB.audio.playbackRate = deckB.bpm / deckB.baseBpm || 1;
   const tempoControl = document.querySelector('input[data-role="tempo"][data-deck="1"]');
-  tempoControl.value = String(Math.max(-10, Math.min(10, (deckB.bpm / deckB.baseBpm - 1) * 100)));
-
-  updateDeckView(deckA);
-  updateDeckView(deckB);
-  setStatus(`Deck B matched to ${Math.round(deckA.bpm)} BPM`);
+  const requestedPitch = (deckA.bpm / deckB.baseBpm - 1) * 100;
+  tempoControl.value = String(Math.max(-10, Math.min(10, requestedPitch)));
+  updateDeckAudioFromControls(1);
+  saveSettings();
+  setStatus(Math.abs(requestedPitch) > 10
+    ? `Sync limited to ±10%: deck B is ${deckB.bpm.toFixed(1)} BPM`
+    : `Deck B matched to ${deckB.bpm.toFixed(1)} BPM`);
 }
 
 function applyCrossfader() {
@@ -972,13 +1068,21 @@ function bindDeckInputs() {
     startAutoMix();
   });
 
-  fileInput.addEventListener('change', (event) => {
+  fileInput.addEventListener('change', async (event) => {
     const files = Array.from(event.target.files || []);
-    files.forEach((file) => {
-      const deckId = 0;
-      loadTrackForDeck(deckId, file);
-    });
     fileInput.value = '';
+    let unsaved = 0;
+    for (const file of files) {
+      const item = {
+        id: crypto.randomUUID(), name: file.name.replace(/\.[^/.]+$/, ''),
+        type: file.type, size: file.size, addedAt: Date.now(), bpm: 120,
+        cuePoint: 0, loopStart: null, loopEnd: null, file,
+      };
+      state.library.push(item);
+      try { await saveTrackToLibrary(item); } catch { unsaved += 1; }
+    }
+    renderPlaylist();
+    setStatus(`Imported ${files.length} track(s)${unsaved ? `; ${unsaved} available for this session only` : ''}. Use A or B to load a deck.`);
   });
 
   hiddenFileInput.addEventListener('change', (event) => {
@@ -1031,3 +1135,4 @@ async function init() {
 }
 
 window.addEventListener('load', init);
+

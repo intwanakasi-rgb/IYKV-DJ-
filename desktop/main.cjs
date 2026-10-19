@@ -1,13 +1,11 @@
 const { app, BrowserWindow, session, shell } = require('electron');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const appUrl = pathToFileURL(path.join(__dirname, '..', 'index.html')).href;
 
 app.setName('IYK DeckLab');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-  callback(permission === 'midi');
-});
-session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'midi');
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -29,12 +27,18 @@ function createWindow() {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== `file://${path.join(__dirname, '..', 'index.html')}`) event.preventDefault();
+    if (url !== appUrl) event.preventDefault();
   });
   window.loadFile(path.join(__dirname, '..', 'index.html'));
 }
 
 app.whenReady().then(() => {
+  const isTrusted = (contents) => contents?.getURL() === appUrl;
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
+    callback(permission === 'midi' && isTrusted(contents));
+  });
+  session.defaultSession.setPermissionCheckHandler((contents, permission) =>
+    permission === 'midi' && isTrusted(contents));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -44,3 +48,4 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
