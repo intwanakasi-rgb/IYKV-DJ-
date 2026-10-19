@@ -395,3 +395,7 @@ body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:
  .four-decks .deck .performance-row { flex-wrap:wrap; }
  .four-decks .fx-controls { display:flex; flex-wrap:wrap; }
 }
+
+.jog-modes { display:flex; gap:4px; align-items:center; justify-content:center; }.jog-modes button { padding:4px 7px; border:1px solid #68517e; background:#251d32; color:#decdf1; font-size:9px; cursor:pointer; }.jog-modes button[aria-pressed=true] { background:#7443ac; color:white; border-color:#ce9eff; }
+
+.performance-row { flex-wrap:wrap; }.jog-modes { flex:0 0 100%; }

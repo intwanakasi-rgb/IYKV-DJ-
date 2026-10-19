@@ -25,7 +25,7 @@ function harness(saved = {}) {
     URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
     crypto: { randomUUID: () => 'new-track-id' },
   });
-  vm.runInContext(appCode, context);
+  vm.runInContext(appCode.replaceAll('import.meta.url', JSON.stringify('file:///decklab/app.js')), context);
   return { context, element, run: (code) => vm.runInContext(code, context) };
 }
 
@@ -449,4 +449,9 @@ test('FLX2 CFX controls the selected effect amount with centre dry', () => {
  assert.ok(Number(slider.value)<1);
  h.run('onMidiMessage({currentTarget:{id:"flx",name:"DDJ-FLX2"},data:[0xb6,23,127]})');
  assert.equal(Number(slider.value),100);
+});
+
+test('slip restores the uninterrupted timeline at pitch rate, clamped to track end',()=>{
+ const h=harness();h.run('state.audioContext={currentTime:10};deckState[0].audio={currentTime:20,playbackRate:1.1};deckState[0].duration=100;deckState[0].slipMode=true;deckState[0].isPlaying=true;beginSlip(deckState[0],"scratch");state.audioContext.currentTime=15;deckState[0].audio.currentTime=5;finishSlip(deckState[0],"scratch");');
+ assert.equal(h.run('deckState[0].audio.currentTime'),25.5);assert.equal(h.run('deckState[0].slipTimeline'),null);
 });

@@ -136,7 +136,7 @@ function setDeckCount(count) {
   state.deckCount = Number(count) === 4 ? 4 : 2;
   document.querySelector('.workspace')?.classList.toggle('four-decks', state.deckCount === 4);
   if (state.deckCount === 2) {
-    for (const id of [2, 3]) { if (getDeckById(id).isPlaying) pauseDeck(id); getDeckById(id).pfl = false; }
+    for (const id of [2, 3]) { endScratch(getDeckById(id),false); if (getDeckById(id).isPlaying) pauseDeck(id); getDeckById(id).pfl = false; }
     updateHeadphoneMix();
     if (Number(midiTarget.value.slice(-1)) >= 2) midiTarget.value = 'play-0';
     if (state.selectedDeck >= 2) state.selectedDeck = null;
@@ -443,6 +443,7 @@ function drawVisualizer(deck) {
       if (time === null || !Number.isFinite(time)) continue;
       ctx.fillStyle = '#f6cd70'; ctx.fillRect(toX(time), 0, 2 * ratio, height * .25);
     }
+    if(deck.slipTimeline){const t=deck.slipTimeline;ctx.fillStyle='#53efa9';ctx.fillRect(toX(t.position+(state.audioContext.currentTime-t.clock)*t.rate),0,2*ratio,height);}
     ctx.fillStyle = '#ffffff'; ctx.fillRect(toX(deck.currentTime), 0, 2 * ratio, height);
   }
 }
@@ -652,6 +653,51 @@ function midiMappingKey(event) {
   return `${deviceId}:${event.data[0]}:${event.data[1]}`;
 }
 
+function beginSlip(deck,kind) {
+  if(deck.slipMode && deck.isPlaying && !deck.slipTimeline) deck.slipTimeline={kind,position:deck.audio.currentTime,clock:state.audioContext.currentTime,rate:deck.audio.playbackRate};
+}
+function finishSlip(deck,kind) {
+  const timeline=deck.slipTimeline;
+  if(!timeline || (kind && timeline.kind!==kind)) return;
+  deck.audio.currentTime=Math.max(0,Math.min(deck.duration, timeline.position+(state.audioContext.currentTime-timeline.clock)*timeline.rate));
+  deck.slipTimeline=null;
+}
+async function beginScratch(deck) {
+  if(!deck.vinylMode || !deck.objectUrl || deck.scratchGesture) return;
+  const token={wasPlaying:deck.isPlaying,position:deck.audio.currentTime,last:performance.now()};deck.scratchGesture=token;
+  try {
+    ensureContext();await state.audioContext.resume();
+    const item=state.library.find(item=>item.id===deck.libraryId);
+    if(!item || item.file.size>100*1024*1024) throw Error('Scratch preparation requires a loaded track under 100 MB');
+    let decoded=deck.scratchDecoded?.file===item.file ? deck.scratchDecoded.promise : null;
+    if(!decoded){decoded=state.audioContext.decodeAudioData(await item.file.arrayBuffer());deck.scratchDecoded={file:item.file,promise:decoded};}
+    decoded=await decoded;
+    if(decoded.duration>1800)throw Error('Scratch preparation supports tracks up to 30 minutes');
+    state.scratchModule ||= state.audioContext.audioWorklet.addModule(new URL('./scratch-worklet.js',import.meta.url));
+    await state.scratchModule;
+    if(deck.scratchGesture!==token)return;
+    beginSlip(deck,'scratch');deck.audio.pause();
+    const node=new AudioWorkletNode(state.audioContext,'decklab-scratch',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
+    token.node=node;
+    node.port.onmessage=({data})=>{if(deck.scratchGesture===token){token.position=data.position;deck.audio.currentTime=data.position;}};
+    const channels=Array.from({length:Math.min(2,decoded.numberOfChannels)},(_,c)=>decoded.getChannelData(c).slice());
+    node.port.postMessage({type:'load',channels,sampleRate:decoded.sampleRate,position:token.position},channels.map(channel=>channel.buffer));
+    node.connect(deck.low);
+    setStatus(`Vinyl scratch ready on deck ${deckLetter(deck.id)}`);
+  }catch(error){if(deck.scratchGesture===token){endScratch(deck);setStatus(`Scratch unavailable: ${error.message}`);}}
+}
+function moveScratch(deck,seconds) {
+  const token=deck.scratchGesture;if(!token?.node)return;
+  const now=performance.now(), elapsed=Math.max(.008,(now-token.last)/1000);token.last=now;
+  token.node.port.postMessage({type:'move',speed:seconds/elapsed});
+}
+function endScratch(deck,resume=true) {
+  const token=deck.scratchGesture;if(!token)return;
+  deck.scratchGesture=null;token.node?.port.postMessage({type:'stop'});token.node?.disconnect();token.node?.port.close();
+  if(token.node)deck.audio.currentTime=token.position;
+  finishSlip(deck,'scratch');
+  if(resume && token.wasPlaying)void startDeckPlayback(deck);
+}
 function flx2Mapping(status, number, bank = 0) {
   const channel=status&15, type=status&240, deck=channel+bank;
   if(channel<2 && type===144 && [11,12].includes(number)) return {action:`${number===11?'play':'cue'}-${deck}`};
@@ -683,6 +729,7 @@ function handleFlx2Extra(event, bank) {
   }
   if(channel<2 && type===176 && [33,34,35,41].includes(number)) {
     const target=getDeckById(deck), delta=value-64;
+    if(target.vinylMode && target.scratchGesture){moveScratch(target,delta*.025);return true;}
     if(target.audio && target.objectUrl && delta) target.audio.currentTime=Math.max(0,Math.min(target.duration||0,target.audio.currentTime+delta*.025));
     return true;
   }
@@ -715,8 +762,16 @@ function onMidiMessage(event) {
   const type = status & 0xf0;
   if (event.data.length !== 3 || ![0x80, 0x90, 0xb0].includes(type) ||
       number > 127 || value > 127) return;
+  const flxDevice=isFlx2Input(source), channel=status&15;
+  const activeBank=state.deckCount===4 && document.getElementById('controllerBank')?.value==='cd'?2:0;
+  if(!state.midiLearning && flxDevice && channel<2 && number===54 && [128,144].includes(type)) {
+    const deck=getDeckById(channel+activeBank);
+    if(type===144 && value>0)void beginScratch(deck);else endScratch(deck);
+    return;
+  }
   const released = type === 0x80 || (type === 0x90 && value === 0);
   if (released) {
+    if(!state.midiLearning && flxDevice && [7,9].includes(channel) && number<8)finishSlip(getDeckById(activeBank+(channel===9?1:0)),'hotcue');
     if (!state.midiLearning) {
       const status = type === 0x80 ? (event.data[0] & 0x0f) | 0x90 : event.data[0];
       const releaseKey = midiMappingKey({currentTarget:event.currentTarget, target:event.target, data:[status,number,0]});
@@ -839,6 +894,7 @@ async function loadTrackForDeck(deckId, file, options = {}) {
     return;
   }
   if (!options.forQueue && (state.queueEnabled || state.autoMix || state.autoMixStarting)) cancelAutoMix();
+  endScratch(deck,false);deck.scratchDecoded=null;deck.slipTimeline=null;
   deck.currentTime = 0;
   deck.duration = 0;
 
@@ -991,6 +1047,7 @@ function togglePlay(deckId) {
 function pauseDeck(deckId) {
   const deck = getDeckById(deckId);
   if (!deck.audio) return;
+  endScratch(deck,false);deck.slipTimeline=null;
   deck.audio.pause();
   deck.isPlaying = false;
   document.querySelector(`[data-action="play"][data-deck="${deckId}"]`).textContent = '▶';
@@ -1141,6 +1198,7 @@ function toggleLoop(deckId) {
   if (deck.loopEnd !== null) {
     deck.loopStart = null;
     deck.loopEnd = null;
+    finishSlip(deck,'loop');
     saveLoop(deck);
     document.getElementById(`loopState${deckLetter(deckId)}`).textContent = 'OFF';
     setStatus(`Loop disabled on deck ${deckLetter(deckId)}`);
@@ -1151,6 +1209,7 @@ function toggleLoop(deckId) {
   const beats = Number(document.querySelector(`[data-role="loop-length"][data-deck="${deckId}"]`)?.value || 4);
   const position = deck.audio.currentTime;
   deck.loopStart = deck.bpmKnown ? Math.max(0, (deck.gridOffset || 0) + Math.floor((position - (deck.gridOffset || 0)) / beatDuration) * beatDuration) : position;
+  beginSlip(deck,'loop');
   deck.loopEnd = Math.min(deck.duration, deck.loopStart + beatDuration * beats);
   if (deck.loopEnd <= deck.loopStart) { deck.loopStart = null; deck.loopEnd = null; return; }
   saveLoop(deck);
@@ -1349,7 +1408,7 @@ function bindDeckInputs() {
     void initializeMidi();
   });
   document.getElementById('controllerBank').addEventListener('change', () => {
-    for (const deck of deckState) if (deck.cueHeld) cueRelease(deck.id);
+    for (const deck of deckState) {endScratch(deck);finishSlip(deck);if (deck.cueHeld) cueRelease(deck.id);}
     state.midiPickup.clear();
     setStatus('Controller deck pair changed. Move faders through the on-screen position to pick up control.');
   });
@@ -1593,6 +1652,7 @@ async function triggerHotCue(deckId, index, clear = false) {
       deck.loopStart = null; deck.loopEnd = null; saveLoop(deck);
       document.getElementById(`loopState${deckLetter(deckId)}`).textContent = 'OFF';
     }
+    beginSlip(deck,'hotcue');
     deck.audio.currentTime = deck.hotCues[index];
     if (!deck.isPlaying) await startDeckPlayback(deck);
   } else deck.hotCues[index] = deck.audio.currentTime;
@@ -1603,6 +1663,7 @@ async function triggerHotCue(deckId, index, clear = false) {
 }
 
 function updateChannelMeter(deck) {
+  for(const mode of ['vinyl','slip'])document.querySelector(`[data-mode="${mode}"][data-deck="${deck.id}"]`)?.setAttribute('aria-pressed',String(Boolean(deck[`${mode}Mode`])));
   updateStereoMeter(deck.stereoMeter, deckLetter(deck.id));
   const jog = document.querySelector(`.jog[data-deck="${deck.id}"]`);
   if (jog) { jog.setAttribute('aria-valuemax', String(deck.duration || 0)); jog.setAttribute('aria-valuenow', String(deck.currentTime || 0)); }
@@ -1697,6 +1758,7 @@ async function queueTick(force = false) {
     } finally { if (epoch === state.queueEpoch) state.queueBusy = false; }
   }
   if (epoch !== state.queueEpoch || !state.queueEnabled) return;
+  if(active.scratchGesture)return;
   const remaining = Math.max(0, (active.audio.duration - active.audio.currentTime) / (active.audio.playbackRate || 1));
   if (state.queueUpcoming === null) {
     if (active.audio.ended) { cancelAutoMix(); renderQueue(); setStatus('Automix queue finished'); }
@@ -1772,7 +1834,7 @@ function bindClassicControls() {
     button.addEventListener('keydown', event => { if ([' ', 'Enter'].includes(event.key) && !event.repeat) { event.preventDefault(); cuePress(id); } });
     button.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); cueRelease(id); } });
   }
-  document.querySelectorAll('[data-action="hotcue"]').forEach(button => button.addEventListener('click', event => triggerHotCue(Number(button.dataset.deck), Number(button.dataset.pad), event.shiftKey)));
+  document.querySelectorAll('[data-action="hotcue"]').forEach(button => button.addEventListener('click', event => {if(button.skipSlipClick){button.skipSlipClick=false;return;}triggerHotCue(Number(button.dataset.deck), Number(button.dataset.pad), event.shiftKey);}));
   document.querySelectorAll('[data-action="prepare"]').forEach(button => button.addEventListener('click', () => prepareTrack(state.library.find(item => item.id === getDeckById(Number(button.dataset.deck)).libraryId))));
   document.querySelectorAll('[data-action="set-cue"]').forEach(button => button.addEventListener('click', () => {
     const deck = getDeckById(Number(button.dataset.deck)); if (!deck.objectUrl) return;
@@ -1797,12 +1859,25 @@ function bindClassicControls() {
     if (!state.headphoneReady) { setStatus('Configure a separate headphone output in Settings first'); return; }
     const deck = getDeckById(Number(button.dataset.deck)); deck.pfl = !deck.pfl; button.setAttribute('aria-pressed', String(deck.pfl)); updateHeadphoneMix();
   }));
+  document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{
+    const deck=getDeckById(Number(button.dataset.deck)), mode=button.dataset.mode;
+    deck[`${mode}Mode`]=!deck[`${mode}Mode`];
+    if(mode==='vinyl' && !deck.vinylMode)endScratch(deck);
+    if(mode==='slip' && !deck.slipMode)finishSlip(deck);
+    button.setAttribute('aria-pressed',String(deck[`${mode}Mode`]));
+    setStatus(`${mode.toUpperCase()} ${deck[`${mode}Mode`]?'ON':'OFF'} on deck ${deckLetter(deck.id)}`);
+  }));
+  document.querySelectorAll('[data-action="hotcue"]').forEach(button=>{
+    const release=()=>finishSlip(getDeckById(Number(button.dataset.deck)),'hotcue');
+    button.addEventListener('pointerdown',event=>{const deck=getDeckById(Number(button.dataset.deck));if(deck.slipMode && deck.isPlaying && Number.isFinite(deck.hotCues?.[Number(button.dataset.pad)]) && !event.shiftKey){button.skipSlipClick=true;button.setPointerCapture(event.pointerId);void triggerHotCue(deck.id,Number(button.dataset.pad));}});
+    button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('keyup',release);
+  });
   document.querySelectorAll('.jog').forEach(jog => {
     const deck = getDeckById(Number(jog.dataset.deck)); let last = null;
     const seek = delta => { if (deck.objectUrl) { if (state.queueEnabled && deck.id < 2) cancelAutoMix(); deck.audio.currentTime = Math.max(0, Math.min(deck.duration || 0, deck.audio.currentTime + delta)); } };
-    jog.addEventListener('pointerdown', event => { last = event.clientX; jog.setPointerCapture(event.pointerId); });
-    jog.addEventListener('pointermove', event => { if (last !== null) { seek((event.clientX - last) * .015); last = event.clientX; } });
-    jog.addEventListener('pointerup', () => { last = null; }); jog.addEventListener('pointercancel', () => { last = null; });
+    jog.addEventListener('pointerdown', event => { if(deck.vinylMode)void beginScratch(deck); last = event.clientX; jog.setPointerCapture(event.pointerId); });
+    jog.addEventListener('pointermove', event => { if (last !== null) { if(deck.vinylMode)moveScratch(deck,(event.clientX-last)*.015);else seek((event.clientX - last) * .015); last = event.clientX; } });
+    jog.addEventListener('pointerup', () => { last = null;endScratch(deck); }); jog.addEventListener('pointercancel', () => { last = null;endScratch(deck); });
     jog.addEventListener('keydown', event => { if (['ArrowLeft','ArrowRight'].includes(event.key)) { event.preventDefault(); seek(event.key === 'ArrowLeft' ? -.1 : .1); } });
   });
   for (const action of ['nudge-up','nudge-down']) document.querySelectorAll(`[data-action="${action}"]`).forEach(button => {
@@ -1822,6 +1897,7 @@ function bindClassicControls() {
     if (event.code === 'Space') { event.preventDefault(); if (state.queueEnabled && id < 2) cancelAutoMix(); togglePlay(id); }
     if (/^Digit[1-8]$/.test(event.code)) { event.preventDefault(); triggerHotCue(id, Number(event.code.slice(-1))-1, event.shiftKey); }
   });
+  window.addEventListener('keyup',event=>{if(/^Digit[1-8]$/.test(event.code))finishSlip(getDeckById(state.focusDeck||0),'hotcue');});
   document.getElementById('startQueueBtn').addEventListener('click', () => startAutoMix());
   document.getElementById('mixNowBtn').addEventListener('click', () => { if (!state.queueEnabled) { setStatus('Start Automix first'); return; } queueTick(true).catch(error => { cancelAutoMix(); setStatus(error.message); }); });
   document.getElementById('clearQueueBtn').addEventListener('click', () => { cancelAutoMix(); state.queue = []; persistQueue(); });

@@ -26,11 +26,11 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
   const server = http.createServer((request, response) => {
     const pathname = decodeURIComponent(request.url.split('?')[0]);
     const file = pathname === '/' ? 'index.html' : pathname.slice(1);
-    if (!['index.html', 'app.js', 'app-version.js', 'styles.css'].includes(file)) { response.writeHead(404); response.end(); return; }
+    if (!['index.html', 'app.js', 'app-version.js', 'styles.css', 'scratch-worklet.js'].includes(file)) { response.writeHead(404); response.end(); return; }
     response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
     let body = fs.readFileSync(path.join(root, file), 'utf8');
     // Instrument only this test server; production app exposes no test globals.
-    if (file === 'app.js') body += '\nwindow.decklabTest = {state,deckState,prepareTrack,cuePress,cueRelease,queueTick,onMidiMessage};';
+    if (file === 'app.js') body += '\nwindow.decklabTest = {state,deckState,prepareTrack,cuePress,cueRelease,queueTick,onMidiMessage,beginScratch,moveScratch,endScratch};';
     response.end(body);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -129,6 +129,16 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     });
     await page.waitForFunction(() => Number(document.getElementById('meterAL').getAttribute('aria-valuenow')) > Number(document.getElementById('meterAR').getAttribute('aria-valuenow')) * 3);
     await page.waitForFunction(() => Number(document.getElementById('meterMasterL').getAttribute('aria-valuenow')) > .005 && Number(document.getElementById('meterMasterR').getAttribute('aria-valuenow')) === 0);
+    await page.locator('[data-mode="vinyl"][data-deck="0"]').click();
+    await page.locator('[data-mode="slip"][data-deck="0"]').click();
+    await page.evaluate(() => {const api=window.decklabTest;api.deckState[0].audio.currentTime=3;api.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0x90,54,127]});});
+    await page.waitForFunction(()=>Boolean(window.decklabTest.deckState[0].scratchGesture?.node));
+    await page.evaluate(()=>window.decklabTest.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0xb0,34,48]}));
+    await page.waitForFunction(()=>window.decklabTest.deckState[0].scratchGesture.position<2.99);
+    await page.waitForFunction(()=>{const data=new Float32Array(256);window.decklabTest.state.masterAnalyser.getFloatTimeDomainData(data);return data.some(v=>Math.abs(v)>.001);});
+    await page.evaluate(()=>window.decklabTest.onMidiMessage({currentTarget:{id:'flx',name:'DDJ-FLX2'},data:[0x90,54,0]}));
+    await page.waitForFunction(()=>!window.decklabTest.deckState[0].scratchGesture && window.decklabTest.deckState[0].audio.currentTime>=3 && !window.decklabTest.deckState[0].audio.paused);
+    await page.locator('[data-mode="slip"][data-deck="0"]').click();
     await page.locator('[data-action="loop"][data-deck="0"]').click();
     await page.waitForFunction(() => document.getElementById('loopStateA').classList.contains('loop-active'));
     assert.equal(await page.locator('[data-action="loop"][data-deck="0"]').getAttribute('aria-pressed'),'true');

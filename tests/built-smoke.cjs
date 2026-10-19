@@ -31,6 +31,12 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
   await page.locator('.track-row').getByRole('button',{name:'A',exact:true}).click();
   await page.waitForFunction(()=>/[0-9]/.test(document.getElementById('bpmA').textContent),null,{timeout:30000});
   assert.equal(await page.locator('.channel-strips > .master-meter .stereo-rail').count(),2);
+  await page.locator('[data-mode="vinyl"][data-deck="0"]').click();
+  const jog=await page.locator('.jog[data-deck="0"]').boundingBox();
+  await page.mouse.move(jog.x+jog.width/2,jog.y+jog.height/2);await page.mouse.down();
+  await page.getByText('Vinyl scratch ready on deck A',{exact:true}).waitFor({timeout:30000});
+  await page.mouse.move(jog.x+jog.width/2+20,jog.y+jog.height/2,{steps:4});await page.mouse.up();
+
   const dimensions=await page.evaluate(()=>({height:document.documentElement.scrollHeight,viewport:innerHeight,meter:document.querySelector('.master-meter').getBoundingClientRect().toJSON(),channel:document.getElementById('channelA').getBoundingClientRect().toJSON()}));
   assert.ok(dimensions.meter.y<dimensions.channel.bottom && dimensions.meter.bottom>dimensions.channel.y);
   await page.locator('#playlist').scrollIntoViewIfNeeded();
