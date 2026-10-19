@@ -1643,6 +1643,7 @@ function updateHeadphoneMix() {
 }
 
 function bindClassicControls() {
+  bindAboutSettings();
   bindAppearanceSettings();
   for (const button of document.querySelectorAll('[data-action="cue"]')) {
     const id = Number(button.dataset.deck);
@@ -1882,4 +1883,30 @@ function updateStereoMeter(tap, prefix) {
     rail.classList.toggle('is-clipping',peak>=.99);
     rail.setAttribute('aria-valuenow',Math.min(1,level).toFixed(3)); rail.setAttribute('aria-valuetext',`${db.toFixed(1)} dBFS`);
   });
+}
+
+function setSettingsTab(tab, focus = false) {
+  const about = tab === 'about';
+  const mixerButton = document.getElementById('mixerSettingsTab');
+  const aboutButton = document.getElementById('aboutSettingsTab');
+  mixerButton.setAttribute('aria-selected',String(!about)); aboutButton.setAttribute('aria-selected',String(about));
+  mixerButton.tabIndex = about ? -1 : 0; aboutButton.tabIndex = about ? 0 : -1;
+  document.getElementById('mixerSettingsPanel').hidden = about;
+  document.getElementById('aboutSettingsPanel').hidden = !about;
+  if (focus) (about ? aboutButton : mixerButton).focus();
+}
+function bindAboutSettings() {
+  document.getElementById('aboutVersion').textContent = window.DECKLAB_BUILD?.version || 'Development build';
+  document.getElementById('aboutRuntime').textContent = navigator.userAgent.includes('Electron/') ? 'Desktop' : 'Web browser';
+  for (const [id,tab] of [['mixerSettingsTab','mixer'],['aboutSettingsTab','about']]) {
+    const button = document.getElementById(id);
+    button.addEventListener('click', () => setSettingsTab(tab));
+    button.addEventListener('keydown', event => {
+      if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) {
+        event.preventDefault();
+        setSettingsTab(event.key === 'Home' ? 'mixer' : event.key === 'End' ? 'about' : tab === 'mixer' ? 'about' : 'mixer',true);
+      }
+    });
+  }
+  document.getElementById('settingsBtn').addEventListener('click', () => setSettingsTab('mixer'));
 }

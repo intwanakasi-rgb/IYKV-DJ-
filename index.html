@@ -7,6 +7,7 @@
     <meta name="description" content="IYK DeckLab is a free, local-first DJ mixing workspace by Intwana Yase Kasi.">
     <title>IYK DeckLab</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="app-version.js" type="module"></script>
     <script src="app.js" type="module"></script>
   </head>
   <body>
@@ -99,6 +100,8 @@
     <dialog id="settingsDialog" aria-labelledby="settingsTitle">
       <form method="dialog" class="settings-panel">
         <div class="settings-heading"><div><p class="eyebrow">MIXER PREFERENCES</p><h2 id="settingsTitle">Settings</h2></div><button class="icon-button" value="close" aria-label="Close settings">×</button></div>
+        <div class="settings-tabs" role="tablist" aria-label="Settings sections"><button id="mixerSettingsTab" type="button" role="tab" aria-controls="mixerSettingsPanel" aria-selected="true">Mixer &amp; Layout</button><button id="aboutSettingsTab" type="button" role="tab" aria-controls="aboutSettingsPanel" aria-selected="false" tabindex="-1">About &amp; Downloads</button></div>
+        <section id="mixerSettingsPanel" role="tabpanel" aria-labelledby="mixerSettingsTab">
         <label class="settings-control" for="masterVolume">MASTER OUTPUT <output id="masterVolumeValue">90%</output><input id="masterVolume" type="range" min="0" max="100" value="90"></label>
         <label class="settings-control" for="autoMixDuration">AUTO MIX LENGTH <output id="autoMixDurationValue">12 sec</output><input id="autoMixDuration" type="range" min="4" max="30" step="1" value="12"></label>
         <label class="settings-control" for="crossfaderCurve">CROSSFADER CURVE<select id="crossfaderCurve"><option value="equal-power">Equal power</option><option value="linear">Linear</option></select></label>
@@ -117,6 +120,20 @@
 <label class="check-setting"><input id="showOverview" type="checkbox" checked> Show whole-track overview</label>
 <label class="check-setting"><input id="reduceMotion" type="checkbox"> Reduce motion (slower display refresh)</label>
 <button id="resetAppearanceBtn" type="button">Reset appearance defaults</button></fieldset><fieldset class="audio-routing"><legend>HEADPHONE OUTPUT</legend><button id="refreshOutputsBtn" type="button">Refresh devices</button><label for="headphoneOutput">Separate headphone device</label><select id="headphoneOutput"><option value="">Disabled</option></select><label for="headphoneVolume">Headphone level</label><input id="headphoneVolume" type="range" min="0" max="100" value="70"><label for="headphoneBlend">Cue / Master blend</label><input id="headphoneBlend" type="range" min="0" max="100" value="0"><p id="outputStatus">Requires a separate output device and browser support. Device availability varies.</p></fieldset><p class="settings-note">Preferences and deck controls are saved in this browser on this device.</p>
+        </section>
+        <section id="aboutSettingsPanel" role="tabpanel" aria-labelledby="aboutSettingsTab" hidden>
+          <p class="eyebrow">INTWANA YASE KASI</p><h2>IYK DeckLab</h2>
+          <dl class="about-details"><dt>Version</dt><dd id="aboutVersion">Loading…</dd><dt>Running as</dt><dd id="aboutRuntime">Web / desktop</dd><dt>Licence</dt><dd>MIT · Free to use</dd></dl>
+          <p>A free DJ workspace for kasi practice sessions and creative mixing.</p>
+          <h3>Downloads</h3><div class="about-downloads">
+          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/windows.yml" target="_blank" rel="noopener noreferrer">Windows x64 installer builds</a>
+          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/pages.yml" target="_blank" rel="noopener noreferrer">Web version builds</a>
+          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases" target="_blank" rel="noopener noreferrer">Published releases</a>
+          </div><p class="about-note">Open a successful build and download its artifact. GitHub sign-in and repository access may be required. Windows development installers are unsigned; signed releases require publisher signing setup.</p>
+          <p class="about-note">macOS, Linux, Android and iOS installers are not currently published.</p>
+          <h3>What’s new in 0.2.0</h3><p>Two/four decks, stacked waveforms, vertical or rotary mixer controls, stereo meters, Hot Cues/Effects tabs, customisable settings and queued Automix.</p>
+          <a href="https://github.com/intwanakasi-rgb/IYKV-DJ-" target="_blank" rel="noopener noreferrer">Project &amp; documentation</a>
+        </section>
       </form>
     </dialog>
   </body>

@@ -14,6 +14,12 @@
 
 The native desktop audio engine described in `docs/ARCHITECTURE.md` is still future work. This release uses Web Audio and HTML media, including in Electron. It is not equivalent to VirtualDJ's professional engine.
 
+## Version and downloads
+
+Current version: **0.2.0**. Open **Settings → About & Downloads** to see the running version, web/desktop runtime and Windows/web build download links. Version metadata is generated from `package.json` before web and desktop builds, so both interfaces display the same release number. Settings opens on Mixer & Layout; About is a separate keyboard-accessible tab.
+
+The main-branch Pages workflow builds the same interface as desktop, uploads `IYK-DeckLab-Web` for download and deploys to GitHub Pages. First-time hosting must be enabled in repository **Settings → Pages → Source: GitHub Actions**; the connector used for development cannot change this administrative setting. If deployment is not enabled, the static web artifact is still available to download or host elsewhere.
+
 ## Mixer appearance and performance tabs
 
 The default layout uses **vertical mixer sliders** and **stacked waveforms above the decks**. In Settings, choose vertical sliders, rotary knobs or horizontal sliders. Knobs support vertical dragging, keyboard arrows and double-click to reset to zero; channel volume remains a vertical fader in every mode. Changing control style does not reset the mix.

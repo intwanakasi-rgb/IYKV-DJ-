@@ -26,7 +26,7 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
   const server = http.createServer((request, response) => {
     const pathname = decodeURIComponent(request.url.split('?')[0]);
     const file = pathname === '/' ? 'index.html' : pathname.slice(1);
-    if (!['index.html', 'app.js', 'styles.css'].includes(file)) { response.writeHead(404); response.end(); return; }
+    if (!['index.html', 'app.js', 'app-version.js', 'styles.css'].includes(file)) { response.writeHead(404); response.end(); return; }
     response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
     let body = fs.readFileSync(path.join(root, file), 'utf8');
     // Instrument only this test server; production app exposes no test globals.
@@ -43,6 +43,11 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.waitForFunction(() => Boolean(window.decklabTest?.state.database));
+    await page.locator('#settingsBtn').click();
+    await page.locator('#aboutSettingsTab').click();
+    assert.equal(await page.locator('#aboutVersion').innerText(),require('../package.json').version);
+    assert.equal(await page.locator('#aboutSettingsPanel a').count(),4);
+    await page.getByRole('button',{name:'Close settings',exact:true}).click();
     assert.equal(await page.locator('.deck:visible').count(), 2);
     assert.equal(await page.locator('body').getAttribute('data-mixer-style'),'vertical');
     assert.equal(await page.locator('#waveformRack .detail-wave:visible').count(),2);
