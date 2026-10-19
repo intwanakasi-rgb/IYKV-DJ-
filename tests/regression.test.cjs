@@ -170,6 +170,12 @@ test('desktop installs permission handlers only after Electron ready', async () 
   let allowed;
   handler({ getURL: () => 'https://untrusted.example' }, 'midi', value => { allowed = value; });
   assert.equal(allowed, false);
+  const {pathToFileURL}=require('node:url');
+  const localUrl=pathToFileURL(path.join(__dirname,'../index.html')).href;
+  for (const permission of ['midi','midiSysex']) {
+    handler({getURL:()=>localUrl},permission,value=>{allowed=value;});assert.equal(allowed,true);
+    handler({getURL:()=> 'https://untrusted.example'},permission,value=>{allowed=value;});assert.equal(allowed,false);
+  }
 });
 
 test('loop source boundaries use original BPM when pitch is adjusted', () => {

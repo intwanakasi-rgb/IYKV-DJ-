@@ -807,7 +807,7 @@ async function initializeMidi() {
   } catch (error) {
     midiLearnBtn.title = 'MIDI access was not granted';
     controllerReport(`MIDI permission/open error: ${error.message}`);
-    setStatus(`Controller access failed: ${error.message}. Allow MIDI access in site permissions, then reconnect.`);
+    setStatus(navigator.userAgent.includes('Electron/') ? `Controller access failed: ${error.message}. Install desktop 0.2.2 or later, restart, and reconnect.` : `Controller access failed: ${error.message}. Allow MIDI access in site permissions, then reconnect.`);
   }
 }
 

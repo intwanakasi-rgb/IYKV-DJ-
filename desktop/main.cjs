@@ -49,10 +49,10 @@ function createWindow() {
 app.whenReady().then(() => {
   const isTrusted = (contents) => contents?.getURL() === appUrl;
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
-    callback(['midi', 'speaker-selection'].includes(permission) && isTrusted(contents));
+    callback(['midi', 'midiSysex', 'speaker-selection'].includes(permission) && isTrusted(contents));
   });
   session.defaultSession.setPermissionCheckHandler((contents, permission) =>
-    ['midi', 'speaker-selection'].includes(permission) && isTrusted(contents));
+    ['midi', 'midiSysex', 'speaker-selection'].includes(permission) && isTrusted(contents));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
