@@ -281,9 +281,63 @@ body[data-mixer-style=vertical] .mixer-control input { height:36px; }
 
 .iyk-app-card { display:flex; flex-direction:column; gap:9px; padding:16px; border:1px solid #77529b; background:#292035; border-radius:6px; text-decoration:none; }.iyk-app-card strong { font-size:18px; }.iyk-app-card span { font-size:12px; line-height:1.5; color:#d0bfdc; }body[data-theme=daylight] .iyk-app-card { background:#e5d6f2; }body[data-theme=daylight] .iyk-app-card span { color:#4b315d; }
 
-/* Prominent central master output: independent left and right channels. */
-.central-mixer > .master-meter { display:flex; flex-direction:column; align-items:center; gap:6px; margin:10px auto 14px; }
-.central-mixer > .master-meter .master-stereo { width:70px; height:150px; min-height:150px; gap:10px; }
-.central-mixer > .master-meter .stereo-column { width:30px; }
-.central-mixer > .master-meter .stereo-rail { width:24px; }
-.central-mixer > .master-meter small { font-size:12px; font-weight:bold; }
+/* Central master L/R alongside channel controls, rather than above them. */
+.channel-strips > .master-meter { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:5px; flex:0 0 38px; padding-bottom:2px; }
+.channel-strips > .master-meter .meter-label { font-size:8px; }
+.channel-strips > .master-meter .master-stereo { width:34px; height:175px; min-height:175px; gap:6px; }
+.channel-strips > .master-meter .stereo-column { width:14px; }
+.channel-strips > .master-meter .stereo-rail { width:14px; }
+.channel-strips > .master-meter small { font-size:10px; font-weight:bold; }
+@media(min-width:1000px) and (min-height:650px) {
+ .topbar { min-height:48px; padding:4px 12px; }
+ .workspace { height:calc(100dvh - 48px); min-height:0; gap:7px; padding:7px 10px; }
+ .deck-stage { min-height:0; }
+ .waveform-rack { margin-bottom:6px; padding:3px; }
+ body[data-waveform-layout] .detail-wave { height:min(var(--wave-height),5vh) !important; }
+ .decks { gap:7px; }
+ .deck,.central-mixer { padding:6px; }
+ .central-mixer { position:static; }
+ .mixer-title { margin-bottom:6px; }
+ .channel-strip h3 { margin-bottom:5px; }
+ .channel-strip .mixer-control { margin-bottom:4px; gap:2px; }
+ body[data-mixer-style=vertical] .mixer-control input { height:27px; }
+ .channel-strip button { padding:4px 0; }
+ .fader-meter,.channel-content > .stereo-meters { height:80px; min-height:80px; margin-top:5px; }
+ .channel-strip input.channel-fader { height:76px; }
+ .central-mixer .mix-strip { margin-top:5px; padding:5px; }
+ #headphoneStatus { margin:4px 0; }
+ .deck-heading { height:20px; }
+ .deck .track-line { margin:3px 0; min-height:26px; }
+ .track-copy h1,.track-copy h2 { font-size:15px; }
+ .track-copy p { display:none; }
+ .wave-frame { height:30px; }
+ .jog { width:52px; height:52px; border-width:4px; }
+ .jog-row { padding:2px; }
+ .transport,.performance-row .transport { height:42px; gap:5px; }
+ .transport-button { min-width:30px; padding:3px; }
+ .play-button { width:36px; height:36px; }
+ .tempo-row,.fx-controls { margin-top:4px; padding-top:4px; }
+ .prepare-row { margin:4px 0; gap:3px; }
+ .prepare-row button,.prepare-row input { padding:4px; }
+ .performance-tabs { margin:5px 0; padding-bottom:3px; }
+ .performance-tabs button { padding:4px 8px; }
+ .pad-heading { margin-bottom:3px; }
+ .pads button { padding:5px; }
+ .library-panel { flex:1; min-height:120px; overflow:hidden; padding:8px 10px 26px; }
+ .library-heading { margin-bottom:4px; }
+ .library-columns { margin-top:4px; }
+ .browser-content { min-height:0; height:calc(100% - 65px); overflow:auto; }
+ .playlist,.queue-panel ol { max-height:100%; }
+ .crate-nav { padding-top:4px; }
+ .crate-nav button { padding:5px; margin-bottom:4px; }
+}
+@media(min-width:1000px) and (min-height:650px) {
+ .channel-strip .mixer-control { display:grid; grid-template-columns:28px 1fr 24px; min-height:29px; align-items:center; }
+ .channel-strip .mixer-control .dial { justify-self:center; }
+ .central-mixer .controller-help { display:none; }
+ .central-mixer .crossfader-row { min-height:30px; }
+ .central-mixer .master-actions { margin-top:3px; }
+ .central-mixer .button { padding:4px; min-height:25px; }
+ .deck-mode { margin-bottom:4px; }
+ .channel-strips > .master-meter .master-stereo { height:160px; min-height:160px; }
+}

@@ -1397,7 +1397,7 @@ function analysePcm(samples, sampleRate) {
 
 async function analyseInWorker(samples, sampleRate) {
   if (typeof Worker === 'undefined') throw Error('Track preparation requires Web Worker support');
-  const code = `${analysePcm.toString()}; onmessage = ({data}) => { try { postMessage({result:analysePcm(data.samples,data.sampleRate)}); } catch(error) { postMessage({error:error.message}); } };`;
+  const code = `const analyse = (${analysePcm.toString()}); onmessage = ({data}) => { try { postMessage({result:analyse(data.samples,data.sampleRate)}); } catch(error) { postMessage({error:error.message}); } };`;
   const url = URL.createObjectURL(new Blob([code], {type:'text/javascript'}));
   const worker = new Worker(url);
   try {

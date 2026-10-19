@@ -35,3 +35,5 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - run: npm run web:build
+      - run: node tests/built-smoke.cjs
