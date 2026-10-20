@@ -399,3 +399,9 @@ body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:
 .jog-modes { display:flex; gap:4px; align-items:center; justify-content:center; }.jog-modes button { padding:4px 7px; border:1px solid #68517e; background:#251d32; color:#decdf1; font-size:9px; cursor:pointer; }.jog-modes button[aria-pressed=true] { background:#7443ac; color:white; border-color:#ce9eff; }
 
 .performance-row { flex-wrap:wrap; }.jog-modes { flex:0 0 100%; }
+
+/* Optional support stays compact and never covers the mixing controls. */
+.donate-button { white-space: nowrap; }
+.donation-card { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #354255); border-radius: 10px; }
+.donation-card h3 { margin-top: 0; }
+.donation-card .button { display: inline-flex; }

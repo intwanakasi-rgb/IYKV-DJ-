@@ -15,6 +15,7 @@
       <a class="brand" href="#" aria-label="IYK DeckLab home"><span class="brand-mark">IYK</span><span>DeckLab<small>BY INTWANA YASE KASI</small></span></a>
       <div class="topbar-center"><span class="live-dot"></span><span id="statusPill" role="status">Ready to mix</span><span class="status-divider"></span><span id="audioStatus">AUDIO ENGINE IDLE</span></div>
       <div class="topbar-actions"><button id="connectControllerBtn" class="button button-quiet" type="button">Connect controller</button>
+        <a class="button button-quiet donate-button" href="https://iykhub.online/donate" target="_blank" rel="noopener noreferrer" title="Optional donation through IYKHub / Paystack. All features stay free.">♡ <span>Donate</span></a>
         <button class="button button-quiet settings-button" id="settingsBtn" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">⚙ <span>Settings</span></button>
         <a class="button button-quiet downloads-button" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest/download/IYK-DeckLab-Windows-Installer.exe" aria-label="Download Windows x64 installer (unsigned development build)" title="Download Windows x64 installer (unsigned development build)">↓ <span>Download Windows</span></a>
         <label class="button button-quiet import-button" for="fileInput">+ <span>Import tracks</span></label>
@@ -125,15 +126,21 @@
         <section id="aboutSettingsPanel" role="tabpanel" aria-labelledby="aboutSettingsTab" hidden>
           <p class="eyebrow">INTWANA YASE KASI</p><h2>IYK DeckLab</h2>
           <dl class="about-details"><dt>Version</dt><dd id="aboutVersion">Loading…</dd><dt>Running as</dt><dd id="aboutRuntime">Web / desktop</dd><dt>Release downloads</dt><dd id="aboutDownloadCount">Unavailable</dd><dt>Count updated</dt><dd id="aboutDownloadsUpdated">—</dd><dt>Licence</dt><dd>MIT · Free to use</dd></dl>
-          <p>A free DJ workspace for kasi practice sessions and creative mixing.</p>
+          <p>A free DJ workspace for kasi practice sessions and creative mixing. All features and controller support are free.</p>
+          <section class="donation-card" aria-labelledby="donationHeading">
+            <h3 id="donationHeading">Support free DJ tools</h3>
+            <p>Donations help IYK keep building. Giving is optional: no subscriptions, feature unlocks or paid queue priority.</p>
+            <a class="button button-quiet" href="https://iykhub.online/donate" target="_blank" rel="noopener noreferrer">Donate via IYKHub · Paystack ↗</a>
+            <p class="about-note">Opens IYKHub’s existing donation page in your browser. IYKHub currently requires sign-in and accepts donations from R5. DeckLab does not collect payment details.</p>
+          </section>
           <p class="about-note">Download count covers published GitHub release installers. Development build ZIP downloads are not included; this is a verified build-time snapshot, not a live user count.</p><h3>Downloads</h3><div class="about-downloads">
           <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest/download/IYK-DeckLab-Windows-Installer.exe" target="_blank" rel="noopener noreferrer">Download Windows x64 installer</a>
-          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/actions/workflows/pages.yml" target="_blank" rel="noopener noreferrer">Web version builds</a>
+          <a class="button button-quiet" href="https://iykdecklab.vercel.app/" target="_blank" rel="noopener noreferrer">Open web version</a>
           <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases" target="_blank" rel="noopener noreferrer">Published releases</a>
-          </div><p class="about-note">Open a successful build and download its artifact. GitHub sign-in and repository access may be required. Windows development installers are unsigned; signed releases require publisher signing setup.</p>
+          </div><p class="about-note">The Windows button downloads the latest published installer. Close DeckLab before installing an update. Windows development installers are unsigned; signed releases require publisher signing setup.</p>
           <p class="about-note">macOS, Linux, Android and iOS installers are not currently published.</p>
           <h3>Other IYK Apps</h3><a class="iyk-app-card" href="https://iykhub.online/" target="_blank" rel="noopener noreferrer"><strong>IYK Hub</strong><span>A digital kasi community centre for creativity, games and opportunities.</span><span>Open iykhub.online ↗</span></a>
-          <h3>What’s new in 0.2.0</h3><p>Two/four decks, stacked waveforms, vertical or rotary mixer controls, stereo meters, Hot Cues/Effects tabs, customisable settings and queued Automix.</p>
+          <h3>What’s new in 0.3.1</h3><p>Optional IYKHub / Paystack donations, clearer free-feature information and corrected web/download links. Includes 0.3.0 Vinyl scratching and Slip for scratches, loops and held hot cues.</p>
           <a href="https://github.com/intwanakasi-rgb/IYKV-DJ-" target="_blank" rel="noopener noreferrer">Project &amp; documentation</a>
         </section>
       </form>
