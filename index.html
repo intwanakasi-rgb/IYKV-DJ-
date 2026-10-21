@@ -17,7 +17,7 @@
       <div class="topbar-actions"><button id="connectControllerBtn" class="button button-quiet" type="button">Connect controller</button>
         <a class="button button-quiet donate-button" href="https://iykhub.online/donate" target="_blank" rel="noopener noreferrer" title="Optional donation through IYKHub / Paystack. All features stay free.">♡ <span>Donate</span></a>
         <button class="button button-quiet settings-button" id="settingsBtn" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">⚙ <span>Settings</span></button>
-        <a class="button button-quiet downloads-button" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest/download/IYK-DeckLab-Windows-Installer.exe" aria-label="Download Windows x64 installer (unsigned development build)" title="Download Windows x64 installer (unsigned development build)">↓ <span>Download Windows</span></a>
+        <a class="button button-quiet downloads-button" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest" target="_blank" rel="noopener noreferrer" aria-label="Check for Windows updates" title="Open the latest Windows release and compare versions">↻ <span>Check for updates</span></a>
         <label class="button button-quiet import-button" for="fileInput">+ <span>Import tracks</span></label>
         <input id="fileInput" type="file" accept="audio/*" multiple hidden>
         <button class="button button-record" id="recordBtn" type="button" title="Start or stop a local master recording"><span class="record-dot"></span><span>Record</span><time id="recordTime">00:00</time></button>
@@ -135,13 +135,13 @@
             <p class="about-note">Opens IYKHub’s existing donation page in your browser. IYKHub currently requires sign-in and accepts donations from R5. DeckLab does not collect payment details.</p>
           </section>
           <p class="about-note">Download count covers published GitHub release installers. Development build ZIP downloads are not included; this is a verified build-time snapshot, not a live user count.</p><h3>Downloads</h3><div class="about-downloads">
-          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest/download/IYK-DeckLab-Windows-Installer.exe" target="_blank" rel="noopener noreferrer">Download Windows x64 installer</a>
+          <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases/latest" target="_blank" rel="noopener noreferrer">Check for Windows updates</a>
           <a class="button button-quiet" href="https://iykdecklab.vercel.app/" target="_blank" rel="noopener noreferrer">Open web version</a>
           <a class="button button-quiet" href="https://github.com/intwanakasi-rgb/IYKV-DJ-/releases" target="_blank" rel="noopener noreferrer">Published releases</a>
-          </div><p class="about-note">The Windows button downloads the latest published installer. Close DeckLab before installing an update. Windows development installers are unsigned; signed releases require publisher signing setup.</p>
+          </div><p class="about-note">Check for updates opens the latest release. Compare its version with the version above, then download the Windows installer if newer. Close DeckLab before installing an update. Windows development installers are unsigned; signed releases require publisher signing setup.</p>
           <p class="about-note">macOS, Linux, Android and iOS installers are not currently published.</p>
           <h3>Other IYK Apps</h3><a class="iyk-app-card" href="https://iykhub.online/" target="_blank" rel="noopener noreferrer"><strong>IYK Hub</strong><span>A digital kasi community centre for creativity, games and opportunities.</span><span>Open iykhub.online ↗</span></a>
-          <h3>What’s new in 0.4.0</h3><p>Free moderated community submissions, headphone-only submission preview, optional prepared-track level matching and silence trimming for Automix. Includes optional Paystack donations, Vinyl scratching and Slip.</p>
+          <h3>What’s new in 0.4.1</h3><p>Improved stereo-safe analysis, finer BPM estimates, clearer analysis failures and Check for updates. Existing tracks can be reanalysed with ANALYSE; manually corrected BPM is preserved.</p>
           <a href="https://github.com/intwanakasi-rgb/IYKV-DJ-" target="_blank" rel="noopener noreferrer">Project &amp; documentation</a>
         </section>
       </form>

@@ -487,3 +487,14 @@ test('headphone selection ignores an older request finishing after a newer one',
  assert.notEqual(h.run('outputs[0].paused'),false);
  await h.run(`selectHeadphoneOutput('')`);assert.equal(h.run('state.headphoneReady'),false);assert.equal(h.run('state.headphoneMaster.gain.value'),0);
 });
+
+test('analysis preserves opposite-polarity stereo energy and estimates non-integer frame tempos', () => {
+ const h=harness();
+ for(const bpm of [90,120,128,140]){
+  const result=h.run(`(()=>{const rate=8000,length=rate*30;const pcm=Float32Array.from({length},(_,i)=>((i/rate)%(60/${bpm}))<.025?Math.sin(i*.4)*.8:0);const prepared=prepareAnalysisSamples({sampleRate:rate,length,numberOfChannels:2,getChannelData(c){return c?Float32Array.from(pcm,x=>-x):pcm;}});return analysePcm(prepared.samples,prepared.sampleRate);})()`);
+  assert.ok(result.peak>.5);assert.ok(Math.abs(result.bpm-bpm)<.7,`${bpm} detected as ${result.bpm}`);
+ }
+});
+test('a single transient does not invent a tempo',()=>{
+ const h=harness();const result=h.run(`(()=>{const pcm=new Float32Array(80000);pcm[1000]=1;return analysePcm(pcm,8000);})()`);assert.equal(result.bpm,null);
+});

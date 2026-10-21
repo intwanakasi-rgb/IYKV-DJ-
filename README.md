@@ -120,3 +120,11 @@ FLX2 effects (0.2.3): SHIFT + SMART FADER toggles the selected effect for both d
 Expand **Community submissions** in the Library to connect a separately hosted inbox, create an upload link, preview in headphones, approve into the library and add tracks to Automix. The Node server and public upload form are in `server/`; they are not automatically hosted by the desktop installer or static web build. See [setup and limits](docs/COMMUNITY_SUBMISSIONS.md).
 
 Settings now include approximate level matching and silence trimming for prepared tracks. Use PREPARE before a set. All features remain free; donations are optional. The inbox requires a public HTTPS server to receive submissions from Facebook audiences.
+
+## Code signing policy
+
+Windows development installers are currently unsigned. The proposed free SignPath route is awaiting the owner's source-publication decision and provider approval; no certificate has been issued to this project through that route. See [application preparation and signing policy](docs/FREE_SIGNING_APPLICATION.md).
+
+## 0.4.1: analysis and updates
+
+Windows download controls now say **Check for updates** and open the latest release page so you can compare versions before downloading. This is a manual update check. The analysis pipeline now preserves stereo energy even when channels have opposite polarity, refines BPM estimates between analysis frames, rejects single-transient tempo guesses, clears stale estimated BPM when reanalysis is inconclusive, and preserves manual BPM corrections. Press **ANALYSE** on existing tracks to recalculate. BPM remains an estimate, especially with half/double-time or changing tempos.

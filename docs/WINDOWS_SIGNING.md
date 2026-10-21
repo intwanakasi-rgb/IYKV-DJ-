@@ -36,3 +36,8 @@ After merging the workflow, run **Publish Windows release** with a new version t
 On Windows, `scripts/verify-windows-signature.ps1` requires Windows to report a Valid Authenticode signature and a timestamp for both the installer and app. It optionally checks the expected publisher identity. The release fails if these checks fail. SHA-256 checksums verify file integrity; they do not replace publisher signing or guarantee an app is safe.
 
 The signing profile and missing-credential refusal are unit tested. Actual signing and verification remain untested until a real trusted certificate is configured. Signing does not change DJ functionality or prove the absence of malware.
+
+
+## Free signing route
+
+See [prepared SignPath application](FREE_SIGNING_APPLICATION.md). The repository is currently private; source publication requires an owner decision, and provider approval is still outstanding. No trusted signing was performed in 0.4.1.

@@ -998,6 +998,7 @@ function renderPlaylist() {
     favourite.addEventListener('click', async () => { item.favourite = !item.favourite; await persistTrack(item); renderPlaylist(); });
     const prepare = document.createElement('button');
     prepare.type = 'button'; prepare.textContent = item.preparing ? '…' : 'ANALYSE'; prepare.disabled = Boolean(item.preparing);
+    prepare.title = item.analysisError || 'Recalculate waveform and estimated BPM; manual BPM is preserved';
     prepare.addEventListener('click', () => prepareTrack(item));
     const queue = document.createElement('button');
     queue.type = 'button'; queue.textContent = '+ QUEUE'; queue.addEventListener('click', () => enqueueTrack(item.id));
@@ -1540,7 +1541,7 @@ window.addEventListener('load', init);
 function analysePcm(samples, sampleRate) {
   const bins = 4000;
   const peaks = new Array(bins).fill(0);
-  const frameSize = Math.max(1, Math.round(sampleRate / 100));
+  const frameSize = Math.max(1, Math.round(sampleRate / 200));
   const frames = Math.ceil(samples.length / frameSize);
   const energy = new Float32Array(frames);
   let peak = 0;
@@ -1557,19 +1558,34 @@ function analysePcm(samples, sampleRate) {
     onset[index] = Math.max(0, Math.sqrt(energy[index]) - Math.sqrt(energy[index - 1]));
     if (index < 1000 && onset[index] > strongest) { strongest = onset[index]; anchorFrame = index; }
   }
-  // Restrict candidate tempo to 60–180; half/double-time ambiguity is exposed as an estimate.
-  let best = 0, bestLag = 0;
+  // Normalised onset correlation, with fractional-lag refinement. Compare a
+  // bounded interval so long tracks do not block the worker indefinitely.
   const rate = sampleRate / frameSize;
-  for (let lag = Math.round(rate * 60 / 180); lag <= Math.round(rate); lag++) {
-    let score = 0;
-    const limit = Math.min(frames, 18000);
-    for (let index = lag; index < limit; index++) score += onset[index] * onset[index - lag];
-    score /= Math.max(1, limit - lag);
-    if (score > best) { best = score; bestLag = lag; }
+  const limit = Math.min(frames, Math.round(rate * 180));
+  let maximum = 0;
+  for (let i=0;i<limit;i++) maximum = Math.max(maximum,onset[i]);
+  let pulses = 0;
+  for(let i=1;i<limit-1;i++) if(onset[i] > maximum*.2 && onset[i]>=onset[i-1] && onset[i]>onset[i+1]) pulses++;
+  const minLag=Math.floor(rate*60/180),maxLag=Math.ceil(rate*60/60);
+  const scores=new Float32Array(maxLag+2);
+  let best=0,bestLag=0;
+  for(let lag=minLag-1;lag<=maxLag+1;lag++) {
+    let product=0,left=0,right=0;
+    for(let i=lag;i<limit;i++){product+=onset[i]*onset[i-lag];left+=onset[i]*onset[i];right+=onset[i-lag]*onset[i-lag];}
+    scores[lag]=left && right ? product/Math.sqrt(left*right) : 0;
   }
+  for(let lag=minLag;lag<=maxLag;lag++) if(scores[lag]>best){best=scores[lag];bestLag=lag;}
+  // Near-equal octave candidates favour the faster interpretation, never a
+  // claim that half/double-time musical ambiguity has been eliminated.
+  for(let lag=minLag;lag<bestLag;lag++) if(scores[lag]>=best*.97 && scores[lag]>=scores[lag-1] && scores[lag]>=scores[lag+1]) {bestLag=lag;break;}
+  const denominator=bestLag ? scores[bestLag-1]-2*scores[bestLag]+scores[bestLag+1] : 0;
+  const offset=denominator ? Math.max(-.5,Math.min(.5,.5*(scores[bestLag-1]-scores[bestLag+1])/denominator)) : 0;
+  const candidate=bestLag ? 60*rate/(bestLag+offset) : 0;
+  const reliable=pulses>=4 && maximum>.00001 && best>.2 && candidate>=59.5 && candidate<=180.5;
   return {
     waveform: peaks, duration: samples.length / sampleRate,
-    bpm: bestLag && best > 0.00001 ? Math.round(60 * rate / bestLag * 10) / 10 : null,
+    bpm: reliable ? Math.round(candidate*10)/10 : null,
+    confidence: reliable ? best : 0,
     gridOffset: anchorFrame / rate, peak,
   };
 }
@@ -1578,15 +1594,16 @@ async function analyseInWorker(samples, sampleRate) {
   if (typeof Worker === 'undefined') throw Error('Track preparation requires Web Worker support');
   const code = `const analyse = (${analysePcm.toString()}); onmessage = ({data}) => { try { postMessage({result:analyse(data.samples,data.sampleRate)}); } catch(error) { postMessage({error:error.message}); } };`;
   const url = URL.createObjectURL(new Blob([code], {type:'text/javascript'}));
-  const worker = new Worker(url);
+  let worker;
   try {
+    worker = new Worker(url);
     return await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(Error('Track analysis timed out')), 90000);
       worker.onmessage = ({data}) => { clearTimeout(timeout); data.error ? reject(Error(data.error)) : resolve(data.result); };
       worker.onerror = () => { clearTimeout(timeout); reject(Error('Track analysis failed')); };
       worker.postMessage({samples, sampleRate}, [samples.buffer]);
     });
-  } finally { worker.terminate(); URL.revokeObjectURL(url); }
+  } finally { worker?.terminate(); URL.revokeObjectURL(url); }
 }
 
 async function persistTrack(track) {
@@ -1606,17 +1623,15 @@ function prepareTrack(item) {
       setStatus(`Analysing ${item.name}`);
       const decoded = await state.audioContext.decodeAudioData(await item.file.arrayBuffer());
       if (decoded.duration > 1800) throw Error('Prepare tracks shorter than 30 minutes; set BPM manually for longer recordings');
-      // Average channels at 8kHz to bound worker-transfer size.
-      const step = Math.max(1, Math.floor(decoded.sampleRate / 8000));
-      const mono = new Float32Array(Math.ceil(decoded.length / step));
-      for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
-        const data = decoded.getChannelData(channel);
-        for (let n = 0; n < mono.length; n++) mono[n] += data[n * step] / decoded.numberOfChannels;
-      }
-      const result = await analyseInWorker(mono, decoded.sampleRate / step);
+      // Rectified block energy keeps opposite-polarity stereo channels from
+      // cancelling and includes every sample rather than point-subsampling.
+      const {samples:mono, sampleRate:analysisRate} = prepareAnalysisSamples(decoded);
+      const result = await analyseInWorker(mono, analysisRate);
       item.audioProfile = measureAudioProfile(decoded);
       delete item.analysisError;
       item.waveform = result.waveform; item.duration = decoded.duration;
+      item.analysisVersion = 2; item.bpmConfidence = result.confidence;
+      if (!item.bpmManual && !result.bpm) { item.bpmKnown=false; item.bpmEstimated=false; }
       if (!item.bpmManual && result.bpm) {
         item.bpm = result.bpm; item.bpmKnown = true; item.bpmEstimated = true; item.gridOffset = result.gridOffset;
       }
@@ -1636,7 +1651,7 @@ function prepareTrack(item) {
         }
       }
       setStatus(result.bpm ? 'Waveform ready. BPM is an estimate: check the grid and correct if needed.' : 'Waveform ready; no reliable BPM found. Set BPM manually.');
-    } catch (error) { item.analysisError = error.message; setStatus(error.message); }
+    } catch (error) { item.analysisError = error.message; setStatus(`Analysis failed for ${item.name}: ${error.message}. Retry ANALYSE or set BPM manually.`); }
     finally { delete item.preparing; renderPlaylist(); }
   };
   state.prepareChain = state.prepareChain.then(task, task);
@@ -2315,4 +2330,16 @@ function bindCommunityControls() {
     if(community.busy){document.getElementById('inboxStatus').textContent='Wait for the current inbox operation to finish';return;}
     stopSubmissionPreview();community.url='';community.token='';community.sessions=[];renderInbox();document.getElementById('inboxStatus').textContent='Disconnected';
   });
+}
+
+function prepareAnalysisSamples(buffer) {
+  const step=Math.max(1,Math.floor(buffer.sampleRate/8000));
+  const samples=new Float32Array(Math.ceil(buffer.length/step));
+  const channels=Array.from({length:buffer.numberOfChannels},(_,c)=>buffer.getChannelData(c));
+  for(let n=0;n<samples.length;n++){
+    const end=Math.min(buffer.length,(n+1)*step);let sum=0;
+    for(const channel of channels)for(let i=n*step;i<end;i++)sum+=channel[i]*channel[i];
+    samples[n]=Math.sqrt(sum/((end-n*step)*channels.length));
+  }
+  return {samples,sampleRate:buffer.sampleRate/step};
 }
