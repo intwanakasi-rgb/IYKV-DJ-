@@ -121,6 +121,7 @@ const state = {
     appearance: {...appearanceDefaults},
     masterVolume: 90,
     autoMixDuration: 12,
+    autoLevel: true, trimSilence: true,
     crossfaderCurve: 'equal-power',
     decks: [
       { volume: 80, low: 0, mid: 0, high: 0, tempo: 0, effect: 'off', effectAmount: 50 },
@@ -300,7 +301,9 @@ function buildDeckGraph(deck) {
   toneFilter.type = 'lowpass'; toneFilter.frequency.value = 20000;
   const preAnalyser = state.audioContext.createAnalyser();
   preAnalyser.fftSize = 256;
-  high.connect(trimNode); trimNode.connect(toneFilter); toneFilter.connect(preAnalyser);
+  const levelNode = state.audioContext.createGain();
+  deck.levelNode = levelNode;
+  high.connect(levelNode); levelNode.connect(trimNode); trimNode.connect(toneFilter); toneFilter.connect(preAnalyser);
   preAnalyser.connect(gainNode);
   deck.trimNode = trimNode; deck.toneFilter = toneFilter; deck.preAnalyser = preAnalyser;
   deck.peakSamples = new Float32Array(preAnalyser.fftSize);
@@ -537,7 +540,7 @@ async function mixLoadedDecks() {
   // centred crossfader plays both tracks at full mix level during startup.
   crossfaderInput.value = outgoingDeck.id === 0 ? '0' : '100';
   applyCrossfader();
-  if (!incomingDeck.isPlaying) incomingDeck.audio.currentTime = incomingDeck.cuePoint || 0;
+  if (!incomingDeck.isPlaying) incomingDeck.audio.currentTime = mixStart(incomingDeck);
   try {
     const startPromises = [incomingDeck]
       .filter((deck) => !deck.isPlaying)
@@ -907,6 +910,7 @@ async function loadTrackForDeck(deckId, file, options = {}) {
   deck.hotCues = Array.from({length:8}, (_, index) => Number.isFinite(options.hotCues?.[index]) ? options.hotCues[index] : null);
   deck.gridOffset = options.gridOffset || 0;
   deck.cuePoint = Number(options.cuePoint || 0);
+  deck.audioProfile = options.audioProfile || null;
   deck.libraryId = options.id || crypto.randomUUID();
   deck.loopStart = Number.isFinite(options.loopStart) ? options.loopStart : null;
   deck.loopEnd = Number.isFinite(options.loopEnd) ? options.loopEnd : null;
@@ -1142,6 +1146,7 @@ function restoreSettings() {
   try {
     const saved = JSON.parse(stored);
     restoreAppearance(saved?.appearance);
+    for (const key of ['autoLevel', 'trimSilence']) if (typeof saved[key] === 'boolean') state.settings[key] = saved[key];
     if (Number.isFinite(saved.masterVolume)) state.settings.masterVolume = Math.max(0, Math.min(100, saved.masterVolume));
     if (Number.isFinite(saved.autoMixDuration)) state.settings.autoMixDuration = Math.max(4, Math.min(30, saved.autoMixDuration));
     if (saved.crossfaderCurve === 'linear' || saved.crossfaderCurve === 'equal-power') {
@@ -1312,6 +1317,7 @@ function updateDeckAudioFromControls(deckId) {
   deck.high.gain.value = high;
   const trim = Number(document.querySelector(`[data-role="trim"][data-deck="${deckId}"]`)?.value || 0);
   const filter = Number(document.querySelector(`[data-role="filter"][data-deck="${deckId}"]`)?.value || 0);
+  applyTrackLevel(deck);
   if (deck.trimNode) deck.trimNode.gain.value = 10 ** (trim / 20);
   if (deck.toneFilter) {
     deck.toneFilter.type = filter > 0 ? 'highpass' : 'lowpass';
@@ -1608,6 +1614,8 @@ function prepareTrack(item) {
         for (let n = 0; n < mono.length; n++) mono[n] += data[n * step] / decoded.numberOfChannels;
       }
       const result = await analyseInWorker(mono, decoded.sampleRate / step);
+      item.audioProfile = measureAudioProfile(decoded);
+      delete item.analysisError;
       item.waveform = result.waveform; item.duration = decoded.duration;
       if (!item.bpmManual && result.bpm) {
         item.bpm = result.bpm; item.bpmKnown = true; item.bpmEstimated = true; item.gridOffset = result.gridOffset;
@@ -1616,6 +1624,8 @@ function prepareTrack(item) {
       await persistTrack(item);
       for (const deck of deckState.filter(deck => deck.libraryId === item.id)) {
         deck.waveform = item.waveform;
+        // Apply newly measured gain only while stopped to avoid a mid-song level jump.
+        if (!deck.isPlaying) { deck.audioProfile = item.audioProfile; applyTrackLevel(deck); }
         {
           deck.baseBpm = item.bpm || 120; deck.bpmKnown = Boolean(item.bpmKnown);
           deck.bpmEstimated = Boolean(item.bpmEstimated); deck.gridOffset = item.gridOffset || 0;
@@ -1626,7 +1636,7 @@ function prepareTrack(item) {
         }
       }
       setStatus(result.bpm ? 'Waveform ready. BPM is an estimate: check the grid and correct if needed.' : 'Waveform ready; no reliable BPM found. Set BPM manually.');
-    } catch (error) { setStatus(error.message); }
+    } catch (error) { item.analysisError = error.message; setStatus(error.message); }
     finally { delete item.preparing; renderPlaylist(); }
   };
   state.prepareChain = state.prepareChain.then(task, task);
@@ -1698,15 +1708,15 @@ function renderQueue() {
 }
 
 function waitForTrack(deck) {
-  if (deck.audio.readyState >= 1 && Number.isFinite(deck.audio.duration)) return Promise.resolve();
+  if (deck.audio.readyState >= 3 && Number.isFinite(deck.audio.duration)) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const finish = (error) => {
-      clearTimeout(timeout); deck.audio.removeEventListener('loadedmetadata', ready); deck.audio.removeEventListener('error', failed);
+      clearTimeout(timeout); deck.audio.removeEventListener('canplay', ready); deck.audio.removeEventListener('error', failed);
       error ? reject(error) : resolve();
     };
     const ready = () => finish(); const failed = () => finish(Error(`Cannot decode ${deck.fileName}`));
     const timeout = setTimeout(() => finish(Error(`Timed out loading ${deck.fileName}`)), 15000);
-    deck.audio.addEventListener('loadedmetadata', ready); deck.audio.addEventListener('error', failed);
+    deck.audio.addEventListener('canplay', ready); deck.audio.addEventListener('error', failed);
   });
 }
 
@@ -1728,6 +1738,7 @@ async function startAutoMix() {
     if (epoch !== state.queueEpoch) return;
     pauseDeck(1 - active.id);
     crossfaderInput.value = active.id === 0 ? '0' : '100'; applyCrossfader();
+    if (!active.isPlaying && active.audio.currentTime === 0) active.audio.currentTime = mixStart(active);
     if (!active.isPlaying && !await startDeckPlayback(active)) throw Error('Could not start Automix playback');
     if (epoch !== state.queueEpoch) { pauseDeck(active.id); return; }
     toggleAutoMixBtn.textContent = 'STOP AUTOMIX';
@@ -1751,15 +1762,18 @@ async function queueTick(force = false) {
       await loadTrackForDeck(incoming.id, item.file, {...item, fromLibrary:true, forQueue:true});
       await waitForTrack(incoming);
       if (epoch !== state.queueEpoch) return;
-      incoming.audio.currentTime = incoming.cuePoint || 0;
-      state.queueUpcoming = incoming.id; state.queue.shift(); persistQueue();
+      incoming.audio.currentTime = mixStart(incoming);
+      state.queueUpcoming = incoming.id;
+      const queuedIndex = state.queue.indexOf(id);
+      if (queuedIndex >= 0) state.queue.splice(queuedIndex, 1);
+      persistQueue();
     } catch (error) {
-      if (epoch === state.queueEpoch) { state.queue.shift(); persistQueue(); setStatus(`${error.message}; skipped queued track`); }
+      if (epoch === state.queueEpoch) { const index = state.queue.indexOf(id); if (index >= 0) state.queue.splice(index, 1); persistQueue(); setStatus(`${error.message}; skipped queued track`); }
     } finally { if (epoch === state.queueEpoch) state.queueBusy = false; }
   }
   if (epoch !== state.queueEpoch || !state.queueEnabled) return;
   if(active.scratchGesture)return;
-  const remaining = Math.max(0, (active.audio.duration - active.audio.currentTime) / (active.audio.playbackRate || 1));
+  const remaining = Math.max(0, (mixEnd(active) - active.audio.currentTime) / (active.audio.playbackRate || 1));
   if (state.queueUpcoming === null) {
     if (active.audio.ended) { cancelAutoMix(); renderQueue(); setStatus('Automix queue finished'); }
     return;
@@ -1788,12 +1802,17 @@ async function refreshHeadphoneOutputs() {
 }
 
 async function selectHeadphoneOutput(id) {
+  const generation = state.headphoneGeneration = (state.headphoneGeneration || 0) + 1;
   ensureContext();
+  stopSubmissionPreview();
   const previous = state.headphoneAudio;
   if (previous) { previous.pause(); previous.srcObject = null; }
-  state.headphoneReady = false;
+  state.headphoneReady = false; state.headphoneId = '';
+  updateHeadphoneMix();
   if (!id) { document.getElementById('headphoneStatus').textContent = 'Headphones disabled'; return; }
+  let audio;
   try {
+    deckState.forEach(buildDeckGraph);
     if (!state.headphoneBus) {
       const ctx = state.audioContext;
       state.headphoneBus = ctx.createGain(); state.headphoneBus.gain.value = .7;
@@ -1805,25 +1824,46 @@ async function selectHeadphoneOutput(id) {
         deck.preAnalyser.connect(deck.cueGain); deck.cueGain.connect(state.headphoneBus);
       }
     }
-    const audio = new Audio(); state.headphoneAudio = audio;
+    audio = new Audio(); state.headphoneAudio = audio;
     await audio.setSinkId(id);
+    if (generation !== state.headphoneGeneration) return;
     audio.srcObject = state.headphoneDestination.stream;
     await state.audioContext.resume(); await audio.play();
-    state.headphoneReady = true;
+    if (generation !== state.headphoneGeneration) { audio.pause(); audio.srcObject = null; return; }
+    state.headphoneReady = true; state.headphoneId = id;
     updateHeadphoneMix();
     document.getElementById('headphoneStatus').textContent = 'Headphones ready · PFL selects cue channels';
-  } catch (error) { document.getElementById('headphoneStatus').textContent = `Headphone output failed: ${error.message}`; }
+  } catch (error) {
+    if (audio) { audio.pause(); audio.srcObject = null; }
+    if (generation !== state.headphoneGeneration) return;
+    state.headphoneReady = false; updateHeadphoneMix();
+    document.getElementById('headphoneStatus').textContent = `Headphone output failed: ${error.message}`;
+  }
 }
 
 function updateHeadphoneMix() {
   if (!state.headphoneBus) return;
   const blend = Number(document.getElementById('headphoneBlend').value) / 100;
   state.headphoneBus.gain.value = Number(document.getElementById('headphoneVolume').value) / 100;
-  state.headphoneMaster.gain.value = blend;
+  state.headphoneMaster.gain.value = state.headphoneReady ? blend : 0;
   for (const deck of deckState) if (deck.cueGain) deck.cueGain.gain.value = state.headphoneReady && deck.pfl ? 1 - blend : 0;
 }
 
 function bindClassicControls() {
+  bindCommunityControls();
+  for (const key of ['autoLevel','trimSilence']) {
+    const input = document.getElementById(key); input.checked = state.settings[key];
+    input.addEventListener('change', () => { state.settings[key] = input.checked; saveSettings(); deckState.forEach(applyTrackLevel); });
+  }
+  navigator.mediaDevices?.addEventListener('devicechange', async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (state.headphoneId && !devices.some(d => d.deviceId === state.headphoneId)) {
+        await selectHeadphoneOutput('');
+        document.getElementById('headphoneStatus').textContent = 'Headphone device disconnected. Reconnect and select it again.';
+      }
+    } catch {}
+  });
   bindAboutSettings();
   bindAppearanceSettings();
   for (const button of document.querySelectorAll('[data-action="cue"]')) {
@@ -2124,4 +2164,155 @@ function bindAboutSettings() {
     });
   }
   document.getElementById('settingsBtn').addEventListener('click', () => setSettingsTab('mixer'));
+}
+
+
+// Active-window RMS is an approximate level match, not an integrated LUFS measurement.
+function measureAudioProfile(buffer) {
+  const frame = Math.max(1, Math.round(buffer.sampleRate * .02));
+  let peak = 0, energy = 0, count = 0, first = -1, last = 0;
+  const channels = Array.from({length:buffer.numberOfChannels}, (_, c) => buffer.getChannelData(c));
+  for (let start = 0; start < buffer.length; start += frame) {
+    const end = Math.min(buffer.length, start + frame); let sum = 0;
+    for (const channel of channels) for (let n = start; n < end; n++) {
+      const sample = Number.isFinite(channel[n]) ? channel[n] : 0;
+      peak = Math.max(peak, Math.abs(sample)); sum += sample * sample;
+    }
+    const samples = (end - start) * channels.length;
+    if (Math.sqrt(sum / samples) > .0031623) {
+      if (first < 0) first = start / buffer.sampleRate;
+      last = end / buffer.sampleRate; energy += sum; count += samples;
+    }
+  }
+  const rms = count ? Math.sqrt(energy / count) : 0;
+  const gain = rms ? Math.min(2, .125 / rms, .891 / Math.max(peak, .000001)) : 1;
+  return {gain, peak, rms, start:Math.max(0, first - .1), end:Math.min(buffer.duration, last + .1), silent:first < 0};
+}
+function applyTrackLevel(deck) {
+  if (!deck.levelNode) return;
+  const gain = state.settings.autoLevel && Number.isFinite(deck.audioProfile?.gain) ? Math.max(0, Math.min(2, deck.audioProfile.gain)) : 1;
+  if (deck.levelNode.gain.setTargetAtTime) deck.levelNode.gain.setTargetAtTime(gain, state.audioContext.currentTime, .1);
+  else deck.levelNode.gain.value = gain;
+}
+function mixStart(deck) {
+  const start = deck.cuePoint || (state.settings.trimSilence && !deck.audioProfile?.silent ? deck.audioProfile?.start : 0) || 0;
+  return Math.max(0, Math.min(start, Math.max(0, (deck.audio.duration || 0) - .1)));
+}
+function mixEnd(deck) {
+  const end = state.settings.trimSilence && !deck.audioProfile?.silent ? deck.audioProfile?.end : null;
+  return Number.isFinite(end) && end > mixStart(deck) ? Math.min(end, deck.audio.duration) : deck.audio.duration;
+}
+
+// Credentials live only in memory and are sent only to the host-selected server.
+const community = {url:'', token:'', sessions:[], busy:false, preview:null, previewUrl:null};
+function stopSubmissionPreview() {
+  if (community.preview) { community.preview.pause(); community.preview.src = ''; }
+  if (community.previewUrl) URL.revokeObjectURL(community.previewUrl);
+  community.preview = null; community.previewUrl = null;
+  community.previewGeneration = (community.previewGeneration || 0) + 1;
+}
+async function inboxRequest(path, method = 'GET', audio = false) {
+  if (!community.url || !community.token) throw Error('Connect your submission server first');
+  const response = await fetch(community.url + path, {method, headers:{Authorization:'Bearer '+community.token}, signal:AbortSignal.timeout(60000), redirect:'error', credentials:'omit'});
+  if (!response.ok) { const body = await response.json().catch(()=>({})); throw Error(body.error || `Inbox request failed (${response.status})`); }
+  if (!audio) return response.json();
+  if (Number(response.headers.get('content-length')) > 50*1024*1024) throw Error('Submission exceeds the 50 MB limit');
+  const blob = await response.blob(); if (blob.size > 50*1024*1024) throw Error('Submission exceeds the 50 MB limit');
+  return blob;
+}
+async function refreshInbox() {
+  community.sessions = await inboxRequest('/sessions');
+  if (!Array.isArray(community.sessions)) throw Error('Invalid inbox response');
+  renderInbox();
+}
+async function communityAction(action) {
+  if (community.busy) return;
+  community.busy = true;
+  const status = document.getElementById('inboxStatus');status.textContent = 'Working…';
+  try { await action(); status.textContent = 'Inbox ready. Preview, approve/import, then add to the Automix queue.'; }
+  catch(error) { status.textContent = error.message; }
+  finally { community.busy = false; }
+}
+async function submissionFile(session, track) {
+  const blob = await inboxRequest(`/sessions/${session.id}/${track.id}/audio`, 'GET', true);
+  const file = new File([blob],track.title,{type:track.type});
+  ensureContext();
+  // Full decode is required before approval or headphone playback.
+  const buffer = await state.audioContext.decodeAudioData(await file.arrayBuffer());
+  if (!Number.isFinite(buffer.duration) || buffer.duration <= 0 || buffer.duration > 1800) throw Error('Submission must be valid audio under 30 minutes');
+  return {file, buffer};
+}
+async function previewSubmission(session, track) {
+  if (!state.headphoneReady || !state.headphoneId) throw Error('Select a separate headphone output in Settings before previewing');
+  stopSubmissionPreview();
+  const generation = community.previewGeneration, device = state.headphoneId;
+  const {file} = await submissionFile(session,track);
+  if (generation !== community.previewGeneration || !state.headphoneReady || device !== state.headphoneId) return;
+  const audio = new Audio(); community.preview = audio;
+  await audio.setSinkId(device);
+  if (generation !== community.previewGeneration) return;
+  community.previewUrl = URL.createObjectURL(file);audio.src = community.previewUrl;
+  audio.volume = Number(document.getElementById('headphoneVolume').value)/100;
+  audio.addEventListener('ended',()=>{if(community.preview===audio)stopSubmissionPreview();});
+  await audio.play();
+  if(generation!==community.previewGeneration)audio.pause();
+}
+async function approveSubmission(session,track) {
+  const id = `submission-${session.id}-${track.id}`;
+  let item = state.library.find(t=>t.id===id);
+  if (!item) {
+    const {file,buffer} = await submissionFile(session,track);
+    const profile = measureAudioProfile(buffer);
+    if (profile.silent) throw Error('This submission contains no usable audio above the silence threshold');
+    item = {id,name:`${track.artist} — ${track.title}`,file,type:file.type,size:file.size,addedAt:Date.now(),bpm:120,bpmKnown:false,duration:buffer.duration,audioProfile:profile,cuePoint:0,loopStart:null,loopEnd:null,submission:{session:session.id,id:track.id}};
+    // Require durable local storage before acknowledging import to the host.
+    await saveTrackToLibrary(item);state.library.push(item);renderPlaylist();
+  }
+  await inboxRequest(`/sessions/${session.id}/${track.id}/approve`,'POST');
+  await prepareTrack(item);
+  await refreshInbox();
+}
+function renderInbox() {
+  const list = document.getElementById('inboxList');list.replaceChildren();
+  const button = (label,action) => {const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',()=>communityAction(action));return b;};
+  for(const session of community.sessions){
+    const section=document.createElement('section');section.className='inbox-session';
+    const title=document.createElement('h3');title.textContent=`${session.open?'Open':'Closed'} session · expires ${new Date(session.expiresAt).toLocaleString()}`;
+    const link=document.createElement('input');link.readOnly=true;link.value=`${community.url}/s/${session.id}`;link.setAttribute('aria-label','Share this submission link on Facebook');
+    section.append(title,link,button(session.open?'Close submissions':'Reopen submissions',async()=>{await inboxRequest(`/sessions/${session.id}/${session.open?'close':'open'}`,'POST');await refreshInbox();}));
+    const cleanup=document.createElement('input');cleanup.type='checkbox';const label=document.createElement('label');label.append(cleanup,document.createTextNode(' Confirm permanent deletion of this session and its uploads'));
+    section.append(label,button('Delete session',async()=>{if(!cleanup.checked)throw Error('Tick the deletion confirmation first');stopSubmissionPreview();await inboxRequest(`/sessions/${session.id}`,'DELETE');await refreshInbox();}));
+    for(const track of session.tracks){
+      const row=document.createElement('div');row.className='inbox-track';
+      const name=document.createElement('p');name.textContent=`${track.artist} — ${track.title} · ${track.status}${track.explicit?' · EXPLICIT':''}`;row.append(name);
+      if(track.status!=='rejected'){
+        row.append(button('Preview in headphones',()=>previewSubmission(session,track)),button('Approve & import',()=>approveSubmission(session,track)),button('Reject',async()=>{stopSubmissionPreview();await inboxRequest(`/sessions/${session.id}/${track.id}/reject`,'POST');await refreshInbox();}));
+        const item=state.library.find(t=>t.id===`submission-${session.id}-${track.id}`);
+        if(track.status==='approved' && item)row.append(button(item.submissionQueued?'Already added to queue':'Add to Automix queue',async()=>{
+          if(item.submissionQueued)return;
+          if(!state.queue.includes(item.id) && !deckState.some(d=>d.libraryId===item.id && (d.isPlaying || state.queueUpcoming===d.id)))enqueueTrack(item.id);
+          item.submissionQueued=true;await persistTrack(item);renderInbox();
+        }));
+      }
+      section.append(row);
+    }
+    list.append(section);
+  }
+}
+function bindCommunityControls() {
+  document.getElementById('connectInboxBtn').addEventListener('click',()=>communityAction(async()=>{
+    const url = new URL(document.getElementById('inboxServer').value);
+    if(url.username || url.password || url.search || url.hash || url.pathname !== '/' || (url.protocol!=='https:' && !(url.protocol==='http:' && ['localhost','127.0.0.1'].includes(url.hostname))))throw Error('Use an HTTPS server address (HTTP is allowed only on localhost)');
+    stopSubmissionPreview();community.url=url.origin;community.token=document.getElementById('inboxToken').value.trim();
+    document.getElementById('inboxToken').value='';
+    if(community.token.length<32)throw Error('Enter your host token (at least 32 characters)');
+    community.sessions=[];renderInbox();await refreshInbox();
+  }));
+  document.getElementById('refreshInboxBtn').addEventListener('click',()=>communityAction(refreshInbox));
+  document.getElementById('createSessionBtn').addEventListener('click',()=>communityAction(async()=>{await inboxRequest('/sessions','POST');await refreshInbox();}));
+  document.getElementById('stopPreviewBtn').addEventListener('click',stopSubmissionPreview);
+  document.getElementById('disconnectInboxBtn').addEventListener('click',()=>{
+    if(community.busy){document.getElementById('inboxStatus').textContent='Wait for the current inbox operation to finish';return;}
+    stopSubmissionPreview();community.url='';community.token='';community.sessions=[];renderInbox();document.getElementById('inboxStatus').textContent='Disconnected';
+  });
 }

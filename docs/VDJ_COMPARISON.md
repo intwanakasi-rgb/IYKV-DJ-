@@ -13,7 +13,7 @@ DeckLab is a free local-first prototype, not yet a replacement for VirtualDJ at 
 | Effects | Seven audio effects plus Off, one selection per deck | Add beat divisions, multi-parameter controls, FX chains and better gain matching. Test with the FLX2. |
 | Performance | Eight hot cues and beat loops | Add sampler banks, beat jump, loop roll, saved loops and richer pad modes. |
 | Stems | None | VDJ separates stems and offers stem controls. This requires a separate local model, processing and hardware-budget project. |
-| Automix | A/B queue and end-of-track gain crossfade | Add saved transition points, phrase-aware transitions, configurable deck routing and robust unattended tests. |
+| Automix | A/B queue, prepared-track silence trimming and approximate RMS level matching (0.4.0) | Add saved transition points, phrase-aware transitions, configurable deck routing and robust unattended tests. |
 | Video / karaoke / DVS / broadcast | Not implemented | These are documented VDJ features; lower priority than dependable audio mixing. |
 | Platforms / delivery | Windows installer and web build; Linux build configuration | Signed Windows releases, update notifications, tested macOS/Linux packages and clearer version/build identity. |
 
@@ -41,3 +41,8 @@ First Vinyl touch decodes the track locally; wait for “Vinyl scratch ready” 
 - https://virtualdj.com/manuals/virtualdj/settings/audiosetup.html
 - https://virtualdj.com/manuals/hardware/alphatheta/ddjflx2/setup.html
 - https://virtualdj.com/manuals/virtualdj.html
+
+
+## Community update (0.4.0)
+
+A free, separately hosted submission inbox now supports session links, moderation, headphone-only preview and approved import/queue actions. This is a new community workflow rather than VirtualDJ feature parity. See [setup and limits](COMMUNITY_SUBMISSIONS.md). Physical FLX2 audio routing, phrase matching, key lock and public hosting remain outstanding.

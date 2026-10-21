@@ -455,3 +455,35 @@ test('slip restores the uninterrupted timeline at pitch rate, clamped to track e
  const h=harness();h.run('state.audioContext={currentTime:10};deckState[0].audio={currentTime:20,playbackRate:1.1};deckState[0].duration=100;deckState[0].slipMode=true;deckState[0].isPlaying=true;beginSlip(deckState[0],"scratch");state.audioContext.currentTime=15;deckState[0].audio.currentTime=5;finishSlip(deckState[0],"scratch");');
  assert.equal(h.run('deckState[0].audio.currentTime'),25.5);assert.equal(h.run('deckState[0].slipTimeline'),null);
 });
+
+
+test('level analysis measures both stereo channels without phase cancellation and bounds boost', () => {
+  const h=harness();
+  const profile=h.run(`measureAudioProfile({sampleRate:1000,length:1000,duration:1,numberOfChannels:2,getChannelData(c){return Float32Array.from({length:1000},(_,i)=>i>199&&i<800?(c?-.5:.5):0);}})`);
+  assert.ok(profile.gain < 1);assert.equal(profile.peak,.5);assert.ok(profile.start >= .08 && profile.start <= .12);assert.ok(profile.end <= .92);
+  assert.equal(h.run(`measureAudioProfile({sampleRate:100,length:100,duration:1,numberOfChannels:1,getChannelData(){return new Float32Array(100);}}).silent`),true);
+});
+test('Automix silence boundaries respect manual cue and can be disabled', () => {
+  const h=harness();h.run(`globalThis.deck={cuePoint:2,audio:{duration:100},audioProfile:{start:5,end:90}}`);
+  assert.equal(h.run('mixStart(deck)'),2);assert.equal(h.run('mixEnd(deck)'),90);
+  h.run('state.settings.trimSilence=false');assert.equal(h.run('mixEnd(deck)'),100);
+});
+test('failed preload does not remove the next queued track after host removes current item', async () => {
+  const h=harness();h.run(`state.queueEnabled=true; state.queue=['bad','good'];state.library=[{id:'bad',file:{}}];deckState[0].audio={duration:100,currentTime:0,playbackRate:1};pauseDeck=()=>{};loadTrackForDeck=async()=>{state.queue.shift();throw Error('bad');};`);
+  await h.run('queueTick()');assert.equal(h.run('state.queue.join()'),'good');
+});
+
+test('headphone selection ignores an older request finishing after a newer one', async () => {
+ const h=harness();h.run(`
+  globalThis.outputs=[];globalThis.releases=[];
+  Audio=class{constructor(){outputs.push(this);}pause(){this.paused=true;}setSinkId(id){this.id=id;return new Promise(resolve=>releases.push(resolve));}play(){this.paused=false;return Promise.resolve();}};
+  ensureContext=()=>{};buildDeckGraph=()=>{};state.audioContext={resume:async()=>{}};
+  state.headphoneBus={gain:{value:0}};state.headphoneMaster={gain:{value:0}};state.headphoneDestination={stream:{}};
+  globalThis.first=selectHeadphoneOutput('old');globalThis.second=selectHeadphoneOutput('new');
+  releases[1]();
+ `);
+ await h.run('second');h.run('releases[0]()');await h.run('first');
+ assert.equal(h.run('state.headphoneId'),'new');assert.equal(h.run('state.headphoneReady'),true);
+ assert.notEqual(h.run('outputs[0].paused'),false);
+ await h.run(`selectHeadphoneOutput('')`);assert.equal(h.run('state.headphoneReady'),false);assert.equal(h.run('state.headphoneMaster.gain.value'),0);
+});

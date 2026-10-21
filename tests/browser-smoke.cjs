@@ -34,6 +34,11 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     response.end(body);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const inboxDir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'decklab-browser-inbox-'));
+  const inboxToken='browser-test-token-'.repeat(3);
+  const inbox=require('../server/submissions.cjs').createSubmissionServer({dir:inboxDir,token:inboxToken,origins:[`http://127.0.0.1:${server.address().port}`]});
+  await new Promise(resolve=>inbox.listen(0,'127.0.0.1',resolve));
+  const inboxUrl=`http://127.0.0.1:${inbox.address().port}`;
   let browser;
   try {
     browser = await chromium.launch({headless:true,
@@ -46,7 +51,7 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     await page.locator('#settingsBtn').click();
     await page.locator('#aboutSettingsTab').click();
     assert.ok((await page.locator('#aboutVersion').innerText()).startsWith(require('../package.json').version));
-    assert.equal(await page.locator('#aboutSettingsPanel a').count(),5);
+    assert.equal(await page.locator('#aboutSettingsPanel a[href="https://iykhub.online/donate"]').count(),1);
     assert.equal(await page.locator('#aboutDownloadCount').innerText(),require('../download-stats.json').total.toLocaleString());
     assert.equal(await page.getByRole('link',{name:/IYK Hub A digital/}).getAttribute('href'),'https://iykhub.online/');
     await page.getByRole('button',{name:'Close settings',exact:true}).click();
@@ -188,7 +193,32 @@ function wav(seconds = 8, frequency = 220, channels = 1) {
     assert.equal(await page.evaluate(() => window.decklabTest.deckState.some(deck => deck.isPlaying)),false);
     await page.setViewportSize({width:640,height:900});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),true,'mobile layout overflows');
+    await page.setViewportSize({width:1600,height:1000});
+    await page.locator('.community-inbox summary').click();
+    await page.fill('#inboxServer',inboxUrl);await page.fill('#inboxToken',inboxToken);
+    await page.click('#connectInboxBtn');await page.waitForFunction(()=>document.getElementById('inboxStatus').textContent.startsWith('Inbox ready'));
+    await page.click('#createSessionBtn');await page.waitForSelector('.inbox-session');
+    const submissionLink=await page.locator('.inbox-session input[readonly]').inputValue();
+    const artistPage=await browser.newPage();await artistPage.goto(submissionLink);
+    await artistPage.fill('[name=artist]','Community Artist');await artistPage.fill('[name=title]','Fresh track');
+    await artistPage.setInputFiles('[name=audio]',{name:'submission.wav',mimeType:'audio/wav',buffer:wav(3,330)});
+    await artistPage.check('[name=permission]');await artistPage.click('button');
+    await artistPage.waitForFunction(()=>document.getElementById('status').textContent.startsWith('Submitted'));
+    await page.click('#refreshInboxBtn');await page.waitForSelector('.inbox-track');
+    await page.getByRole('button',{name:'Preview in headphones',exact:true}).click();
+    await page.waitForFunction(()=>document.getElementById('inboxStatus').textContent.includes('Select a separate headphone'));
+    assert.equal(await page.evaluate(()=>window.decklabTest.deckState.some(d=>d.isPlaying)),false);
+    await page.getByRole('button',{name:'Approve & import',exact:true}).click();
+    await page.waitForSelector('.inbox-track button:has-text("Add to Automix queue")');
+    assert.equal(await page.evaluate(()=>window.decklabTest.state.library.length),4);
+    await page.getByRole('button',{name:'Add to Automix queue',exact:true}).click();
+    await page.waitForSelector('.inbox-track button:has-text("Already added to queue")');
+    await page.getByRole('button',{name:'Already added to queue',exact:true}).click();
+    assert.equal(await page.evaluate(()=>window.decklabTest.state.queue.length),1);
+    assert.equal(await page.evaluate(()=>window.decklabTest.deckState.some(d=>d.isPlaying)),false);
+    await artistPage.close();
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: vertical/knob settings, stacked/deck waveforms, effects tabs, stereo L/R separation, preferences persistence, 2/4 decks, real audio output, worker waveform/BPM, hot cues, cue preview, favourites/crates, three-track queued Automix, persistence and responsive layout.');
-  } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)); }
+    console.log('Browser checks passed: vertical/knob settings, stacked/deck waveforms, effects tabs, stereo L/R separation, preferences persistence, 2/4 decks, real audio output, worker waveform/BPM, hot cues, cue preview, favourites/crates, three-track queued Automix, persistence, responsive layout and real-server submission/upload/approve/import/queue flow.');
+  } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)); await new Promise(resolve=>inbox.close(resolve));fs.rmSync(inboxDir,{recursive:true,force:true}); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

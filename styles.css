@@ -405,3 +405,13 @@ body[data-show-bottom-meters=false] .channel-content > .stereo-meters { display:
 .donation-card { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #354255); border-radius: 10px; }
 .donation-card h3 { margin-top: 0; }
 .donation-card .button { display: inline-flex; }
+
+
+.community-inbox { padding:16px; margin:12px 0; border:1px solid #354255; border-radius:8px; }
+.community-inbox summary { cursor:pointer; font-weight:700; }
+.inbox-connect { display:flex; flex-wrap:wrap; align-items:end; gap:10px; }
+.inbox-connect label { display:grid; gap:5px; flex:1 1 240px; }
+.community-inbox input:not([type=checkbox]) { padding:9px; min-width:0; width:100%; box-sizing:border-box; }
+.community-inbox button { margin:4px; padding:8px 12px; }
+.inbox-session { border-top:1px solid #354255; margin-top:16px; padding-top:12px; }
+.inbox-track { padding:8px 0; border-bottom:1px solid #354255; }

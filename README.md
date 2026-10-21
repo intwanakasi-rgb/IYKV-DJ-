@@ -113,3 +113,10 @@ DDJ-FLX2: connect with USB, click **Connect controller**, and allow MIDI permiss
 FLX2 effects (0.2.3): SHIFT + SMART FADER toggles the selected effect for both decks in the active pair (Echo if no previous choice). Select individual effects in each deck's Effects tab. With an effect enabled, its CFX knob adjusts wet amount (centre dry, either extreme full); with effects off it controls the normal filter. 0.3.0 adds VINYL PCM scratching and SLIP; see docs/VDJ_COMPARISON.md for limits.
 
 0.3.0: per-deck VINYL/SLIP buttons; FLX2 platter touch starts PCM scratching and release resumes playback, with Slip restoring the uninterrupted timeline. [VirtualDJ comparison and roadmap](docs/VDJ_COMPARISON.md).
+
+
+## 0.4.0: free community submissions and audio preparation
+
+Expand **Community submissions** in the Library to connect a separately hosted inbox, create an upload link, preview in headphones, approve into the library and add tracks to Automix. The Node server and public upload form are in `server/`; they are not automatically hosted by the desktop installer or static web build. See [setup and limits](docs/COMMUNITY_SUBMISSIONS.md).
+
+Settings now include approximate level matching and silence trimming for prepared tracks. Use PREPARE before a set. All features remain free; donations are optional. The inbox requires a public HTTPS server to receive submissions from Facebook audiences.
